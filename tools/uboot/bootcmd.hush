@@ -1,0 +1,21 @@
+# H96Max bootcmd. One command per line; build-uboot.sh joins them with "; " into
+# CONFIG_BOOTCOMMAND. Lines starting with # are dropped. No double quotes allowed.
+#
+# Contract: the `boot` partition owns EVERYTHING about Linux (kernel, ramdisk, DTB,
+# cmdline). u-boot never needs reflashing to change the kernel or its arguments.
+#   kernel : gzip Image at page 1 (0x800) of the AOSP v2 image -> unzip -> booti
+#   ramdisk: from the image, used in place
+#   dtb    : the image's DTB (dtb index 0)
+#   cmdline: DTB /chosen/bootargs, THEN the header cmdline -- so the header's last
+#            console= wins (the factory u-boot had it the other way round).
+#            + h96.bootmode / h96.adc / h96.adcerr: what u-boot saw, for the Linux report
+#            (dotted names are module params to the kernel, so init never sees them).
+# On any failure before booti: write the BootROM download flag and reset, so a bad
+# `boot` partition lands in maskrom with no button and no eMMC short.
+setenv h96_img 0x0a000000
+setenv h96_ok 0
+if mmc dev 0 && part start mmc 0 boot h96_blk && part size mmc 0 boot h96_cnt && mmc read ${h96_img} ${h96_blk} ${h96_cnt} && abootimg addr ${h96_img} && abootimg get dtb --index=0 h96_dtb h96_dtbsz && abootimg get ramdisk h96_rd h96_rdsz && setexpr h96_kgz ${h96_img} + 0x800 && unzip ${h96_kgz} ${kernel_addr_r}; then setenv h96_ok 1; fi
+if test ${h96_ok} = 1; then setexpr h96_cmdp ${h96_img} + 0x40; setexpr.s h96_hdr *${h96_cmdp}; setenv h96_dtbargs; fdt addr ${h96_dtb}; fdt get value h96_dtbargs /chosen bootargs; setenv bootargs ${h96_dtbargs} ${h96_hdr} h96.bootmode=${h96_bootmode} h96.adc=${h96_adc} h96.adcerr=${h96_adc_err}; echo h96: bootargs=${bootargs}; booti ${kernel_addr_r} ${h96_rd}:${h96_rdsz} ${h96_dtb}; fi
+echo h96: no bootable kernel in boot -- entering BootROM download mode
+mw.l 0xff370200 0xef08a53c
+reset

@@ -1,0 +1,47 @@
+#!/bin/sh
+# H96Max: write what Alpine sees to the USB stick, three times (~30 s, ~90 s, ~180 s after
+# boot), so even a short run leaves a log. Started once from /etc/inittab (busybox init does
+# not reap it the way a service's leftover child can be). Files on the stick:
+#   alpine-report.txt   summary (USB tree with drivers, links, addresses, services, syslog)
+#   alpine-dmesg.txt    the complete kernel log
+M=/mnt/stick
+snap() {
+	mkdir -p $M
+	mountpoint -q $M || for b in /dev/sd[a-z]1 /dev/sd[a-z]; do
+		[ -b "$b" ] && mount -t vfat "$b" $M 2>/dev/null && break
+	done
+	mountpoint -q $M || return 0
+	{
+		echo "### alpine-report snapshot $1  up $(cut -d' ' -f1 /proc/uptime)s  $(uname -r)"
+		echo "## usb tree (path ids speed product | interface=driver)"
+		for d in /sys/bus/usb/devices/*; do
+			[ -e "$d/idVendor" ] || continue
+			drv=""
+			for i in "$d"/*:*; do
+				[ -e "$i/bInterfaceClass" ] || continue
+				drv="$drv ${i##*/}=$(basename "$(readlink -f "$i/driver" 2>/dev/null)" 2>/dev/null)"
+			done
+			echo "  ${d##*/} $(cat $d/idVendor):$(cat $d/idProduct) spd=$(cat $d/speed) $(cat $d/product 2>/dev/null) |$drv"
+		done
+		echo "## links";     ip -d -br link
+		echo "## addresses"; ip -br addr
+		echo "## routes";    ip route
+		echo "## ethernet link detail (carrier, speed, negotiation)"
+		for n in /sys/class/net/*; do
+			[ "$(basename "$(readlink -f "$n/device/subsystem" 2>/dev/null)")" = usb ] || continue
+			echo "  ${n##*/}: carrier=$(cat $n/carrier 2>/dev/null) operstate=$(cat $n/operstate) speed=$(cat $n/speed 2>/dev/null)"
+			ethtool "${n##*/}" 2>&1 | sed 's/^/    /'
+		done
+		echo "## net drivers"
+		for n in /sys/class/net/*; do echo "  ${n##*/} $(basename "$(readlink -f $n/device/driver 2>/dev/null)" 2>/dev/null)"; done
+		echo "## services";  rc-status -a 2>&1
+		echo "## processes (lan/dhcp/ssh)"; ps | grep -E 'udhcp|h96|sshd' | grep -v grep
+		echo "## /var/log/messages (tail)"; tail -80 /var/log/messages 2>/dev/null
+	} > $M/alpine-report.txt 2>&1
+	dmesg > $M/alpine-dmesg.txt 2>&1
+	sync
+	umount $M 2>/dev/null
+}
+sleep 30;  snap 1
+sleep 60;  snap 2
+sleep 90;  snap 3

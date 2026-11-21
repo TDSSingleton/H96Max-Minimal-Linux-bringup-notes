@@ -1,0 +1,60 @@
+# Upstream repos we cloned. Only a pointer (URL + pinned commit) goes into
+# git, never their contents. The commit each one was pinned at when this file
+# was written is noted above its entry.
+#
+# Our changes to these trees are NOT in the submodules; they live in our own
+# tree and the build scripts apply them (idempotently) to a clean checkout:
+#   downloads/u-boot                 <- tools/uboot/ (DTS files + 0001..0003 patches),
+#                                       applied by tools/build-uboot.sh
+#   downloads/rkdeveloptool-upstream <- tools/rkdeveloptool/0001-*.patch,
+#                                       applied by tools/read-ceiling-ab.sh
+
+# 752d2d4980015020661a602fb7f834aad9e8a009
+[submodule "downloads/armbian-tv98-rk3518"]
+	path = downloads/armbian-tv98-rk3518
+	url = https://github.com/ohaiibuzzle/armbian-tv98-rk3518.git
+	branch = senpai
+
+# 77168c8d5ab82399f65a80e9f807b50ba37cf483
+[submodule "downloads/kernel-rockchip"]
+	path = downloads/kernel-rockchip
+	url = https://github.com/rockchip-linux/kernel.git
+	branch = develop-6.1
+	shallow = true
+
+# d4f5161bceaded221571eceae7290b20746b1114
+[submodule "downloads/rk3518-atv"]
+	path = downloads/rk3518-atv
+	url = https://github.com/kxn/rk3518-atv.git
+	branch = main
+
+# 3e288fe814e059dd06833495f845cab04ac20a5c
+[submodule "downloads/rkbin"]
+	path = downloads/rkbin
+	url = https://github.com/rockchip-linux/rkbin.git
+	branch = master
+
+# ac50fcb73a63af566ea728464e376131b9384948
+[submodule "downloads/rkdeveloptool"]
+	path = downloads/rkdeveloptool
+	url = https://github.com/radxa/rkdeveloptool.git
+	branch = master
+
+# 304f073752fd25c854e1bcf05d8e7f925b1f4e14 (+ local main.cpp change)
+[submodule "downloads/rkdeveloptool-upstream"]
+	path = downloads/rkdeveloptool-upstream
+	url = https://github.com/rockchip-linux/rkdeveloptool.git
+	branch = master
+
+# ece349ade2973e220f524ce59e59711cc919263f (v2026.07, + local H96 Max changes)
+[submodule "downloads/u-boot"]
+	path = downloads/u-boot
+	url = https://github.com/u-boot/u-boot.git
+	shallow = true
+
+# c7db0ea55cacf6cdd5496df0859715e1e15064f2 (7 GB SDK, reference only)
+[submodule "research/neardi-3588-sdk-linux"]
+	path = research/neardi-3588-sdk-linux
+	url = https://github.com/neardi/neardi-3588-sdk-linux.git
+	branch = master
+	shallow = true

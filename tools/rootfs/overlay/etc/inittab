@@ -1,0 +1,9 @@
+# H96Max: tty1 is the HDMI screen and shows the system-info UI (no login there; the box is
+# driven by an IR remote, not a keyboard). A login prompt stays on tty2 for a USB keyboard.
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
+tty1::respawn:/usr/local/bin/h96-info
+tty2::respawn:/sbin/getty 38400 tty2
+::ctrlaltdel:/sbin/reboot
+::shutdown:/sbin/openrc shutdown

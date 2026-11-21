@@ -1,0 +1,727 @@
+diff -ruN a/platform/Kbuild b/platform/Kbuild
+--- a/platform/Kbuild	1970-01-01 00:00:00.000000000 +0000
++++ b/platform/Kbuild	2026-11-21 14:02:13.432080524 +0000
+@@ -0,0 +1,13 @@
++# External-module build of Neardi's seekwaveplatform_v20 (SDIO HAL + chip boot) for the
++# H96Max SWT6621S (SDIO 1ffe:6621). Mirrors Makefile.neardi with Neardi's defconfig:
++#   CONFIG_SEEKWAVE_BSP_DRIVERS_V20=y  CONFIG_SEEKWAVE_PLD_RELEASE=y  CONFIG_SKW_SDIOHAL=m
++# (bools that Kconfig would have put in autoconf.h are passed as -D here)
++obj-m += skw_sdio_v20.o
++skw_sdio_v20-y := sdio/skw_sdio_main.o sdio/skw_sdio_rx.o sdio/skw_sdio_debugfs.o \
++                  sdio/skw_sdio_log.o skwutil/skw_user_com.o skwutil/skw_log_to_file.o \
++                  skwutil/skw_boot.o
++ccflags-y += -I$(src)/../include -I$(src)/sdio -I$(src)/skwutil
++ccflags-y += -DCONFIG_SEEKWAVE_BSP_DRIVERS_V20=1 -DCONFIG_SEEKWAVE_PLD_RELEASE=1
++ccflags-y += -DCONFIG_SKW_SDIOHAL_MODULE=1
++# skw_sdio_debugfs.c prints these two skwifi options; same values as skwifi/Kbuild
++ccflags-y += -DCONFIG_SKW6316_RX_REORDER_TIMEOUT=100 '-DCONFIG_SKW6316_CHIP_ID="SWT6621S"'
+diff -ruN a/platform/Makefile.neardi b/platform/Makefile.neardi
+--- a/platform/Makefile.neardi	2026-11-19 22:01:10.985057318 +0000
++++ b/platform/Makefile.neardi	1970-01-01 00:00:00.000000000 +0000
+@@ -1,67 +0,0 @@
+-#
+-#SeekWave Platform Drivers Makefile
+-#
+-#
+-PWD :=$(shell pwd)
+-CURFOLDER ?=$(pwd)
+-
+-ifeq ($(CONFIG_SKW_PCIE),m)
+-ccflags-y +=-Idrivers/misc/seekwaveplatform_v20/pcie
+-endif
+-
+-#ifdef CONFIG_SEEKWAVE_BSP_DRIVERS_V20
+-#obj-$(CONFIG_SKW_USB)               += usb/
+-#obj-$(CONFIG_SKW_PCIE)               += pcie/
+-#obj-$(CONFIG_SKW_SDIOHAL)           += sdio/
+-#obj-$(CONFIG_SEEKWAVE_BSP_DRIVERS)  += skwutil/
+-#endif
+-
+-ifeq ($(CONFIG_SKW_BT),m)
+-        ccflags-y += -DCONFIG_BT_SEEKWAVE
+-endif
+-
+-ifneq ($(skw_extra_flags),)
+-        ccflags-y += $(skw_extra_flags) -DSKW_EXT_INC
+-endif
+-
+-ifeq ($(CONFIG_SEEKWAVE_PLD_RELEASE),m)
+-	ccflags-y += -DCONFIG_SEEKWAVE_PLD_RELEASE
+-endif
+-
+-#ccflags-y += -DCONFIG_SEEKWAVE_PLD_RELEASE
+-
+-obj-$(CONFIG_SKW_SDIOHAL) += skw_sdio_v20.o
+-skw_sdio_v20-y := sdio/skw_sdio_main.o
+-skw_sdio_v20-y += sdio/skw_sdio_rx.o
+-skw_sdio_v20-y += sdio/skw_sdio_debugfs.o
+-skw_sdio_v20-y += sdio/skw_sdio_log.o
+-skw_sdio_v20-y += skwutil/skw_user_com.o
+-skw_sdio_v20-y += skwutil/skw_log_to_file.o
+-skw_sdio_v20-y += skwutil/skw_boot.o
+-
+-obj-$(CONFIG_SKW_PCIE) += skw_pcie.o
+-skw_pcie-objs := pcie/skw_pcie_drv.o
+-skw_pcie-objs += pcie/skw_edma_drv.o
+-skw_pcie-objs += pcie/skw_pcie_loopcheck.o
+-skw_pcie-objs += pcie/skw_pcie_boot.o
+-skw_pcie-objs += pcie/skw_pcie_debugfs.o
+-skw_pcie-objs += pcie/skw_pcie_log.o
+-skw_pcie-objs += pcie/trace.o
+-skw_pcie-objs += skwutil/skw_user_com.o
+-skw_pcie-objs += skwutil/skw_log_to_file.o
+-skw_pcie-objs += skwutil/skw_boot.o
+-
+-CFLAGS_trace.o := -I$(src)
+-
+-obj-$(CONFIG_SKW_USB) += skw_usb_v20.o
+-skw_usb_v20-y := usb/skw_usb_io.o
+-skw_usb_v20-y += usb/skw_usb_debugfs.o
+-skw_usb_v20-y += usb/skw_usb_log.o
+-#skw_usb_v20-y += ./usb/skw_test.o
+-skw_usb_v20-y += skwutil/skw_user_com.o
+-skw_usb_v20-y += skwutil/skw_log_to_file.o
+-skw_usb_v20-y += skwutil/skw_boot.o
+-
+-clean:
+-	@rm -rf *.o *.ko *.mod.c *.order *.a *.builtin .*.cmd .*.d
+-
+diff -ruN a/platform/Makefile.neardi.txt b/platform/Makefile.neardi.txt
+--- a/platform/Makefile.neardi.txt	1970-01-01 00:00:00.000000000 +0000
++++ b/platform/Makefile.neardi.txt	2026-11-19 22:01:10.985057318 +0000
+@@ -0,0 +1,67 @@
++#
++#SeekWave Platform Drivers Makefile
++#
++#
++PWD :=$(shell pwd)
++CURFOLDER ?=$(pwd)
++
++ifeq ($(CONFIG_SKW_PCIE),m)
++ccflags-y +=-Idrivers/misc/seekwaveplatform_v20/pcie
++endif
++
++#ifdef CONFIG_SEEKWAVE_BSP_DRIVERS_V20
++#obj-$(CONFIG_SKW_USB)               += usb/
++#obj-$(CONFIG_SKW_PCIE)               += pcie/
++#obj-$(CONFIG_SKW_SDIOHAL)           += sdio/
++#obj-$(CONFIG_SEEKWAVE_BSP_DRIVERS)  += skwutil/
++#endif
++
++ifeq ($(CONFIG_SKW_BT),m)
++        ccflags-y += -DCONFIG_BT_SEEKWAVE
++endif
++
++ifneq ($(skw_extra_flags),)
++        ccflags-y += $(skw_extra_flags) -DSKW_EXT_INC
++endif
++
++ifeq ($(CONFIG_SEEKWAVE_PLD_RELEASE),m)
++	ccflags-y += -DCONFIG_SEEKWAVE_PLD_RELEASE
++endif
++
++#ccflags-y += -DCONFIG_SEEKWAVE_PLD_RELEASE
++
++obj-$(CONFIG_SKW_SDIOHAL) += skw_sdio_v20.o
++skw_sdio_v20-y := sdio/skw_sdio_main.o
++skw_sdio_v20-y += sdio/skw_sdio_rx.o
++skw_sdio_v20-y += sdio/skw_sdio_debugfs.o
++skw_sdio_v20-y += sdio/skw_sdio_log.o
++skw_sdio_v20-y += skwutil/skw_user_com.o
++skw_sdio_v20-y += skwutil/skw_log_to_file.o
++skw_sdio_v20-y += skwutil/skw_boot.o
++
++obj-$(CONFIG_SKW_PCIE) += skw_pcie.o
++skw_pcie-objs := pcie/skw_pcie_drv.o
++skw_pcie-objs += pcie/skw_edma_drv.o
++skw_pcie-objs += pcie/skw_pcie_loopcheck.o
++skw_pcie-objs += pcie/skw_pcie_boot.o
++skw_pcie-objs += pcie/skw_pcie_debugfs.o
++skw_pcie-objs += pcie/skw_pcie_log.o
++skw_pcie-objs += pcie/trace.o
++skw_pcie-objs += skwutil/skw_user_com.o
++skw_pcie-objs += skwutil/skw_log_to_file.o
++skw_pcie-objs += skwutil/skw_boot.o
++
++CFLAGS_trace.o := -I$(src)
++
++obj-$(CONFIG_SKW_USB) += skw_usb_v20.o
++skw_usb_v20-y := usb/skw_usb_io.o
++skw_usb_v20-y += usb/skw_usb_debugfs.o
++skw_usb_v20-y += usb/skw_usb_log.o
++#skw_usb_v20-y += ./usb/skw_test.o
++skw_usb_v20-y += skwutil/skw_user_com.o
++skw_usb_v20-y += skwutil/skw_log_to_file.o
++skw_usb_v20-y += skwutil/skw_boot.o
++
++clean:
++	@rm -rf *.o *.ko *.mod.c *.order *.a *.builtin .*.cmd .*.d
++
+diff -ruN a/platform/sdio/skw_sdio_main.c b/platform/sdio/skw_sdio_main.c
+--- a/platform/sdio/skw_sdio_main.c	2026-11-19 22:01:10.985118587 +0000
++++ b/platform/sdio/skw_sdio_main.c	2026-11-21 14:04:37.785670135 +0000
+@@ -860,6 +860,7 @@
+ 	{SDIO_DEVICE(0, 0)},
+ 	{SDIO_DEVICE(0xABCD, 0x1234)},
+ 	{SDIO_DEVICE(0x1FFE, 0x6316)},
++	{SDIO_DEVICE(0x1FFE, 0x6621)},	/* H96Max: SWT6621S as enumerated on the box (report: 0x1ffe:0x6621) */
+ 	{},
+ };
+ 
+@@ -1334,7 +1335,11 @@
+ 	gpio_set_value(skw_sdio->chip_en, 1);
+ 	msleep(5);
+ 	sdio_claim_host(skw_sdio->sdio_func[FUNC_1]);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0)
++	mmc_sw_reset(skw_sdio->sdio_dev_host->card);	/* H96Max port: takes the card since 5.18 */
++#else
+ 	mmc_sw_reset(skw_sdio->sdio_dev_host);
++#endif
+ 	sdio_release_host(skw_sdio->sdio_func[FUNC_1]);	
+ #else
+     sdio_reset_comm((skw_sdio->sdio_dev_host->card));
+diff -ruN a/platform/skwutil/skw_boot.c b/platform/skwutil/skw_boot.c
+--- a/platform/skwutil/skw_boot.c	2026-11-19 22:01:10.985451285 +0000
++++ b/platform/skwutil/skw_boot.c	2026-11-21 14:04:37.785473557 +0000
+@@ -128,6 +128,20 @@
+ 	}
+ 	return (crc);
+ }
++/* H96Max port: firmware for the SWT6621S (SDIO 1ffe:6621), as shipped by the box's ODM in
++ * vendor/etc/firmware. Neardi hardcoded RAM_RW_KERNEL_DRAM.bin / ROM_EXEC_KERNEL_IRAM.bin, and
++ * the box DT names SEEKWAVE_NV_SWT6652.bin, which the ODM never shipped. Parameters, so another
++ * set can be tried without rebuilding:  insmod skw_sdio_v20.ko nv_fw=SWT6621S_NV_SDIO_ALONE.bin */
++static char *iram_fw = "SWT6621S_IRAM_SDIO.bin";
++static char *dram_fw = "SWT6621S_DRAM_SDIO.bin";
++static char *nv_fw   = "SWT6621S_NV_SDIO.bin";
++module_param(iram_fw, charp, 0444);
++module_param(dram_fw, charp, 0444);
++module_param(nv_fw, charp, 0444);
++MODULE_PARM_DESC(iram_fw, "IRAM firmware file (default SWT6621S_IRAM_SDIO.bin)");
++MODULE_PARM_DESC(dram_fw, "DRAM firmware file (default SWT6621S_DRAM_SDIO.bin)");
++MODULE_PARM_DESC(nv_fw, "NV file; overrides the DT seekwave_nv_name (default SWT6621S_NV_SDIO.bin)");
++
+ static int skw_request_firmwares(struct seekwave_device *boot_data,
+ 	const char *dram_image_name, const char *iram_image_name, const char *nv_mem_name)
+ {
+@@ -615,6 +629,7 @@
+ static const struct of_device_id seekwave_match_table[] ={
+ 
+ 	{ .compatible = "seekwave,sv6160"},
++	{ .compatible = "seekwave,sv6160lite"},	/* H96Max: the box DT's seekwcn_boot node */
+ 	{ },
+ };
+ 
+@@ -852,7 +867,9 @@
+ 		boot_data->dram_dl_size = 0;
+ 	}
+ #else
+-	ret = skw_request_firmwares(boot_data, "RAM_RW_KERNEL_DRAM.bin", "ROM_EXEC_KERNEL_IRAM.bin",boot_data->skw_nv_name);
++	skwboot_log("H96Max: firmware iram=%s dram=%s nv=%s (DT nv name: %s)\n", iram_fw, dram_fw, nv_fw,
++		    boot_data->skw_nv_name ? boot_data->skw_nv_name : "(none)");
++	ret = skw_request_firmwares(boot_data, dram_fw, iram_fw, nv_fw);
+ 	skwboot_log("image_size=%d,%d, ret=%d\n", boot_data->iram_dl_size, boot_data->dram_dl_size, ret);
+ 	if (ret < 0){
+ 		return ret;
+diff -ruN a/skwbt/Kbuild b/skwbt/Kbuild
+--- a/skwbt/Kbuild	1970-01-01 00:00:00.000000000 +0000
++++ b/skwbt/Kbuild	2026-11-21 17:23:51.134387385 +0000
+@@ -0,0 +1,5 @@
++# External-module build of Neardi's skwbt (HCI driver for the SeekWave combo chip's BT side)
++# for the H96Max SWT6621S. Binds to the platform device that skw_sdio_v20 creates.
++obj-m += skwbt.o
++skwbt-y := skw_btdriver.o skw_btsnoop.o skw_log.o skw_common.o
++ccflags-y += -I$(src)/../include -I$(src)/../include/linux/platform_data
+diff -ruN a/skwbt/Kconfig b/skwbt/Kconfig
+--- a/skwbt/Kconfig	2026-11-19 22:01:10.314816974 +0000
++++ b/skwbt/Kconfig	1970-01-01 00:00:00.000000000 +0000
+@@ -1,9 +0,0 @@
+-config SKW_BT
+-        tristate "Seekwave BT driver"
+-        depends on SEEKWAVE_BSP_DRIVERS || SEEKWAVE_BSP_DRIVERS_V20
+-        help
+-          The driver for seekwave Bluetooth chipsets .
+-
+-          Say Y here to compile support for Seekwave BT driver
+-          into the kernel or say M to compile it as module.
+-
+diff -ruN a/skwbt/Kconfig.txt b/skwbt/Kconfig.txt
+--- a/skwbt/Kconfig.txt	2026-11-19 22:01:10.315468507 +0000
++++ b/skwbt/Kconfig.txt	1970-01-01 00:00:00.000000000 +0000
+@@ -1,8 +0,0 @@
+-config SKW_BT
+-        tristate "Seekwave BT driver"
+-        depends on SEEKWAVE_BSP_DRIVERS && MMC
+-        help
+-          The driver for seekwave Bluetooth chipsets with SDIO/USB interface.
+-
+-          Say Y here to compile support for Seekwave BT-over-SDIO/USB driver
+-          into the kernel or say M to compile it as module.
+\ No newline at end of file
+diff -ruN a/skwbt/Makefile b/skwbt/Makefile
+--- a/skwbt/Makefile	2026-11-19 22:01:10.315468507 +0000
++++ b/skwbt/Makefile	1970-01-01 00:00:00.000000000 +0000
+@@ -1,16 +0,0 @@
+-# SPDX-License-Identifier: GPL-2.0
+-#
+-# Makefile for the Linux Bluetooth HCI device drivers.
+-#
+-#ccflags-y += -Iseekwave_ea6621q/include/linux/platform_data/
+-ccflags-y += -I$(srctree)/include/linux/platform_data/
+-
+-ifneq ($(skw_extra_flags),)
+-ccflags-y += $(skw_extra_flags)
+-endif
+-
+-obj-$(CONFIG_SKW_BT)  += skwbt.o
+-skwbt-y                     := skw_btdriver.o
+-skwbt-y                     += skw_btsnoop.o
+-skwbt-y                     += skw_log.o
+-skwbt-y                     += skw_common.o
+\ No newline at end of file
+diff -ruN a/skwbt/makefile.txt b/skwbt/makefile.txt
+--- a/skwbt/makefile.txt	2026-11-19 22:01:10.315468507 +0000
++++ b/skwbt/makefile.txt	1970-01-01 00:00:00.000000000 +0000
+@@ -1,5 +0,0 @@
+-obj-$(CONFIG_SKW_BT)       += skwbt.o
+-skwbt-y                    := skw_btdriver.o
+-skwbt-y                    += skw_btsnoop.o
+-skwbt-y                    += skw_log.o
+-skwbt-y                    += skw_common.o
+\ No newline at end of file
+diff -ruN a/skwbt/skw_btdriver.c b/skwbt/skw_btdriver.c
+--- a/skwbt/skw_btdriver.c	2026-11-19 22:01:10.315468507 +0000
++++ b/skwbt/skw_btdriver.c	2026-11-21 18:12:28.784497327 +0000
+@@ -40,6 +40,7 @@
+ #include <linux/firmware.h>
+ #include <linux/notifier.h>
+ #include <linux/delay.h>
++#include <asm/unaligned.h>
+ 
+ #include "skw_btsnoop.h"
+ #include "skw_log.h"
+@@ -209,6 +210,22 @@
+     bt_cb(skb)->pkt_type = pkt_type;
+     memcpy(skb_put(skb, c_len), buf, c_len);
+ 
++    /*
++     * H96Max: the SWT6621S BT firmware advertises "Read Local Supported Codec Capabilities"
++     * (opcode 0x100e) but asserts on it (BSPASSERT hci_tl.c-386, btmon: last command #81),
++     * which takes the whole chip -- WiFi included -- down. Linux 6.1 has no quirk for it, so
++     * hide the codec queries in the Read Local Supported Commands reply: octet 45 bits 2/3
++     * (codecs v2, codec capabilities) and octet 29 bit 5 (codecs v1). Codec offload is not
++     * needed for a remote control.
++     * Command Complete: [0]=0x0e [1]=plen [2]=ncmd [3..4]=opcode [5]=status [6..69]=commands
++     */
++    if (pkt_type == HCI_EVENT_PKT && c_len >= 6 + 64 && skb->data[0] == HCI_EV_CMD_COMPLETE &&
++        get_unaligned_le16(skb->data + 3) == HCI_OP_READ_LOCAL_COMMANDS) {
++        skb->data[6 + 45] &= ~(0x04 | 0x08);
++        skb->data[6 + 29] &= ~0x20;
++        pr_info("skwbt: masked codec commands in supported-commands (chip asserts on 0x100e)\n");
++    }
++
+     hci_recv_frame(data->hdev, skb);
+ 
+     return 0;
+@@ -376,7 +393,11 @@
+         return -1;
+     }
+ 
+-    if(SKW_CHIPID_6316 == chip_version)
++    if(SKW_CHIPID_6160LITE == chip_version)
++    {
++        err = request_firmware(&fw, NV_FILE_NAME_6160LITE, &hdev->dev);
++    }
++    else if(SKW_CHIPID_6316 == chip_version)
+     {
+         err = request_firmware(&fw, NV_FILE_NAME_6316, &hdev->dev);
+     }
+@@ -386,7 +407,7 @@
+     }
+     if (err < 0)
+     {
+-        pr_err("%s file load fail", NV_FILE_NAME);
++        pr_err("NV file for chip 0x%04x load fail", chip_version);
+         return err;
+     }
+     cmd_pld = (u8 *)kzalloc(512, GFP_KERNEL);
+@@ -397,7 +418,7 @@
+         return -1;
+     }
+ 
+-    if(SKW_CHIPID_6316 == chip_version)
++    if(SKW_SHORT_NV(chip_version))	/* H96Max: lite uses the 6316 packetised NV format */
+     {
+         int total_len = 0;
+         int nv_pkt_len = 0;
+diff -ruN a/skwbt/skw_common.c b/skwbt/skw_common.c
+--- a/skwbt/skw_common.c	2026-11-19 22:01:10.315468507 +0000
++++ b/skwbt/skw_common.c	2026-11-21 17:24:01.988096840 +0000
+@@ -25,7 +25,9 @@
+ 
+ #endif
+ 
+-#define BD_ADDR_FILE_PATH "/devinfo/skwbt"
++/* H96Max: persist the BT address on our rootfs (dir created by /etc/init.d/h96-bt), so a
++ * paired remote survives reboots; Android used /devinfo, which does not exist here. */
++#define BD_ADDR_FILE_PATH "/var/lib/skwbt"
+ 
+ 
+ static unsigned char bdaddr_lap[4] = {0x12, 0x24, 0x56};
+@@ -34,6 +36,13 @@
+ 
+ 
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0)
++/* H96Max port: set_fs()/force_uaccess_begin() and mm_segment_t are gone (5.18+); kernel_read/
++ * kernel_write need no address-space switch, so these become no-ops. */
++typedef int mm_segment_t;
++mm_segment_t skwbt_get_fs(void) { return 0; }
++void skwbt_set_fs(mm_segment_t fs) { (void)fs; }
++#else
+ mm_segment_t skwbt_get_fs(void)
+ {
+     mm_segment_t oldfs;
+@@ -56,6 +65,7 @@
+ #endif
+ 
+ }
++#endif
+ 
+ 
+ ssize_t skw_file_write(struct file *fp, const void *buf, size_t len)
+diff -ruN a/skwbt/skw_common.h b/skwbt/skw_common.h
+--- a/skwbt/skw_common.h	2026-11-19 22:01:10.315468507 +0000
++++ b/skwbt/skw_common.h	2026-11-21 18:03:29.319959739 +0000
+@@ -31,6 +31,12 @@
+ 
+ #define SKW_CHIPID_6316 0x5301
+ #define SKW_CHIPID_6160 0x0017
++/* H96Max: the SWT6621S ("SV6160LITE") BT side reports hci_rev 0x5302. The factory BT helper
++ * (libbt-vendor-seekwave.so) gives it sv6160lite.nvbin, which is byte-identical to sv6316.nvbin
++ * (the short packetised NV); the full 354-byte sv6160.nvbin crashed the chip's firmware. */
++#define SKW_CHIPID_6160LITE 0x5302
++#define NV_FILE_NAME_6160LITE    "sv6160lite.nvbin"
++#define SKW_SHORT_NV(v) ((v) == SKW_CHIPID_6316 || (v) == SKW_CHIPID_6160LITE)
+ 
+ 
+ 
+diff -ruN a/skwifi/Kbuild b/skwifi/Kbuild
+--- a/skwifi/Kbuild	1970-01-01 00:00:00.000000000 +0000
++++ b/skwifi/Kbuild	2026-11-21 14:00:25.355856713 +0000
+@@ -0,0 +1,24 @@
++# External-module build of Neardi's skwifi (cfg80211 driver) for the H96Max SWT6621S.
++# Options = Neardi Kconfig defaults (CONFIG_WLAN_VENDOR_SKW6316=m), except:
++#   CHIP_ID "SWT6621S": the calibration file is then SWT6621S_SEEKWAVE_Rxxyyy.bin, which is
++#   what the ODM shipped (SWT6621S_SEEKWAVE_R00001.bin); this older table has no entry for
++#   our chip type and would fall back to "EA6652AS".
++obj-m += skw6316.o
++skw6316-objs := skw_core.o skw_iface.o skw_cfg80211.o skw_msg.o skw_rx.o skw_tx.o skw_regd.o \
++                skw_mlme.o skw_timer.o skw_log.o skw_iw.o skw_work.o skw_mbssid.o skw_dentry.o \
++                skw_util.o skw_recovery.o trace.o \
++                skw_calib.o skw_vendor.o skw_dfs.o
++ccflags-y += -I$(src)/../include -I$(src)/../include/linux/platform_data -I$(src)
++y := 1
++ccflags-y += $(foreach o,STA_SME_EXT SAP_SME_EXT SCAN_RANDOM_MAC TX_WORKQUEUE HIGH_PRIORITY \
++               VENDOR REGD_SELF_MANAGED DFS_MASTER 6GHZ CALIB_DPD CALIB_BUS_SENSITIVE LOG_DEBUG,\
++               -DCONFIG_SKW6316_$(o)=1)
++ccflags-y += -DCONFIG_SKW6316_RX_REORDER_TIMEOUT=100
++ccflags-y += '-DCONFIG_SKW6316_DEFAULT_COUNTRY=""'
++ccflags-y += '-DCONFIG_SKW6316_CHIP_ID="SWT6621S"'
++ccflags-y += '-DCONFIG_SKW6316_PROJECT_NAME="SEEKWAVE"'
++ccflags-y += -DCONFIG_WLAN_VENDOR_SKW6316_MODULE=1
++CFLAGS_trace.o := -I$(src)
++$(obj)/skw_core.o: $(obj)/version.h
++$(obj)/version.h: $(src)/genver.pl
++	@$(PERL) -s $(src)/genver.pl $@
+diff -ruN a/skwifi/Makefile b/skwifi/Makefile
+--- a/skwifi/Makefile	2026-11-19 22:01:11.554435803 +0000
++++ b/skwifi/Makefile	1970-01-01 00:00:00.000000000 +0000
+@@ -1,44 +0,0 @@
+-# SPDX-License-Identifier: GPL-2.0
+-obj-$(CONFIG_WLAN_VENDOR_SKW6316) += skw6316.o
+-
+-skw6316-objs += skw_core.o
+-skw6316-objs += skw_iface.o
+-skw6316-objs += skw_cfg80211.o
+-skw6316-objs += skw_msg.o
+-skw6316-objs += skw_rx.o
+-skw6316-objs += skw_tx.o
+-skw6316-objs += skw_regd.o
+-skw6316-objs += skw_mlme.o
+-skw6316-objs += skw_timer.o
+-skw6316-objs += skw_log.o
+-skw6316-objs += skw_iw.o
+-skw6316-objs += skw_work.o
+-skw6316-objs += skw_mbssid.o
+-skw6316-objs += skw_dentry.o
+-skw6316-objs += skw_util.o
+-skw6316-objs += skw_recovery.o
+-skw6316-objs += trace.o
+-
+-skw6316-$(CONFIG_SKW6316_CALIB_DPD) += skw_calib.o
+-skw6316-$(CONFIG_SKW6316_EDMA) += skw_edma.o
+-skw6316-$(CONFIG_SKW6316_VENDOR) += skw_vendor.o
+-skw6316-$(CONFIG_SKW6316_DFS_MASTER) += skw_dfs.o
+-skw6316-$(CONFIG_SKW6316_TDLS) += skw_tdls.o
+-
+-ccflags-y += -I$(srctree)/include/linux/platform_data/
+-
+-ifneq ($(skw_extra_flags),)
+-ccflags-y += $(skw_extra_flags)
+-endif
+-
+-ifneq ($(skw_extra_symbols),)
+-KBUILD_EXTRA_SYMBOLS += $(skw_extra_symbols)
+-endif
+-
+-CFLAGS_trace.o := -I$(src)
+-
+-$(obj)/skw_core.o : $(obj)/version.h
+-$(obj)/version.h: $(src)/genver.pl
+-	@$(PERL) -s $(src)/genver.pl $@
+-
+-clean-files := version.h
+diff -ruN a/skwifi/skw_cfg80211.c b/skwifi/skw_cfg80211.c
+--- a/skwifi/skw_cfg80211.c	2026-11-19 22:01:11.554435803 +0000
++++ b/skwifi/skw_cfg80211.c	2026-11-21 14:02:13.431782676 +0000
+@@ -1452,7 +1452,7 @@
+ 
+ 	if (SKW_TEST(conf->flags, SKW_KEY_FLAG_WEP_UNICAST) ||
+ 		SKW_TEST(conf->flags, SKW_KEY_FLAG_WEP_MULTICAST))
+-		skw_set_default_key(wiphy, dev, conf->wep_idx,
++		__skw_set_default_key(wiphy, dev, 0, conf->wep_idx,	/* H96Max port: via link_id wrapper */
+ 		SKW_TEST(conf->flags, SKW_KEY_FLAG_WEP_UNICAST),
+ 		SKW_TEST(conf->flags, SKW_KEY_FLAG_WEP_MULTICAST));
+ 
+diff -ruN a/skwifi/skw_compat.h b/skwifi/skw_compat.h
+--- a/skwifi/skw_compat.h	2026-11-19 22:01:11.554435803 +0000
++++ b/skwifi/skw_compat.h	2026-11-21 14:02:13.431527378 +0000
+@@ -481,7 +481,9 @@
+ static inline void skw_ch_switch_notify(struct net_device *dev,
+ 		struct cfg80211_chan_def *chandef, u8 count,  bool quiet)
+ {
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
++	cfg80211_ch_switch_started_notify(dev, chandef, 0, count, quiet);	/* H96Max port: link_id 0 */
++#elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
+ 	cfg80211_ch_switch_started_notify(dev, chandef, count, quiet);
+ #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
+ 	cfg80211_ch_switch_started_notify(dev, chandef, count);
+diff -ruN a/skwifi/skw_msg.c b/skwifi/skw_msg.c
+--- a/skwifi/skw_msg.c	2026-11-19 22:01:11.554807816 +0000
++++ b/skwifi/skw_msg.c	2026-11-21 15:58:24.208318294 +0000
+@@ -1909,8 +1909,13 @@
+ 
+ 		// WARN_ON(msg_ack->total_len - hdr_len != skw->cmd.arg_size);
+ 		if (len != skw->cmd.arg_size)
++		{
+ 			skw_warn("%s expect len: %d, recv len: %d\n",
+ 				 skw->cmd.name, skw->cmd.arg_size, len);
++			/* H96Max debug: the full reply, to map the newer firmware's struct */
++			print_hex_dump(KERN_WARNING, "skw-ack ", DUMP_PREFIX_OFFSET, 16, 1,
++				       data + hdr_len, min(data_len - hdr_len, 512), true);
++		}
+ 
+ 		memcpy(skw->cmd.arg, data + hdr_len,
+ 		       min(data_len - hdr_len, (int)skw->cmd.arg_size));
+diff -ruN a/skwifi/skw_rx.c b/skwifi/skw_rx.c
+--- a/skwifi/skw_rx.c	2026-11-19 22:01:11.554807816 +0000
++++ b/skwifi/skw_rx.c	2026-11-21 16:13:06.779090838 +0000
+@@ -1180,10 +1180,7 @@
+ 			new_desc->is_amsdu = sn_info[i].is_amsdu;
+ 			new_desc->amsdu_first_idx = sn_info[i].amsdu_first;
+ 			new_desc->amsdu_last_idx = sn_info[i].amsdu_last;
+-			if (test_bit(SKW_FLAG_FW_PN_REUSE, &skw->flags))
+-				new_desc->pn_reuse.amsdu_idx = sn_info[i].amsdu_idx;
+-			else
+-				new_desc->msdu.amsdu_idx = sn_info[i].amsdu_idx;
++			new_desc->amsdu_idx = sn_info[i].amsdu_idx;	/* H96Max: one field in both modes */
+ 
+ 			rcu_read_lock();
+ 			skw_ampdu_reorder(skw, new_desc, skb, release_list);
+@@ -1289,7 +1286,7 @@
+ 	skb_push(skb, skw->hw.rx_desc.push_offset);
+ 	desc = (struct skw_rx_desc *)skb_pull(skb, skw->hw.rx_desc.hdr_offset);
+ 	if (test_bit(SKW_FLAG_FW_PN_REUSE, &skw->flags)) {
+-		desc->pn_reuse.msdu_offset = SKW_RX_PN_REUSE_MSDU_OFFSET;
++		desc->msdu_offset = SKW_RX_PN_REUSE_MSDU_OFFSET;
+ 	}
+ 
+ 	return desc;
+@@ -1324,6 +1321,18 @@
+ 		    desc->tid >= SKW_NR_TID) {
+ 			skw_warn("invlid peer: %d, tid: %d\n",
+ 				desc->peer_idx, desc->tid);
++			/* H96Max debug: first 6 dropped frames, from the start of the descriptor */
++			{
++				static int h96_dumps;
++				if (h96_dumps < 6) {
++					h96_dumps++;
++					pr_warn("skw-rx: push %d hdr %d msdu %d flags 0x%lx len %u\n",
++						skw->hw.rx_desc.push_offset, skw->hw.rx_desc.hdr_offset,
++						skw->hw.rx_desc.msdu_offset, skw->flags, skb->len);
++					print_hex_dump(KERN_WARNING, "skw-rx ", DUMP_PREFIX_OFFSET, 16, 1,
++						       (u8 *)desc - 16, min_t(u32, skb->len + 16, 128), true);
++				}
++			}
+ 
+ 			kfree_skb(skb);
+ 			continue;
+@@ -1687,7 +1696,11 @@
+ static int __skw_rx_init(struct skw_core *skw)
+ {
+ 	init_dummy_netdev(&skw->dummy_dev);
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
++	netif_napi_add_weight(&skw->dummy_dev, &skw->napi_rx, skw_rx_poll_rx, 64);	/* H96Max port */
++#else
+ 	netif_napi_add(&skw->dummy_dev, &skw->napi_rx, skw_rx_poll_rx, 64);
++#endif
+ 	napi_enable(&skw->napi_rx);
+ 
+ 	return 0;
+diff -ruN a/skwifi/skw_rx.h b/skwifi/skw_rx.h
+--- a/skwifi/skw_rx.h	2026-11-19 22:01:11.554807816 +0000
++++ b/skwifi/skw_rx.h	2026-11-21 16:12:51.504710084 +0000
+@@ -47,16 +47,16 @@
+ #define CalRssiVal(RssiInit) (RssiInit & BIT(10) ? ((s16)((u16)(RssiInit>>3) | 0xFF00)) : ((s16)(RssiInit>>3)))
+ 
+ #define SKW_RX_MSDU_LEN(skw, desc) \
+-	(test_bit(SKW_FLAG_FW_PN_REUSE, &skw->flags) ? (desc)->pn_reuse.msdu_len : (desc)->msdu.msdu_len)
++	(test_bit(SKW_FLAG_FW_PN_REUSE, &skw->flags) ? (desc)->msdu_len : (desc)->msdu_len_np)
+ 
+ #define SKW_RX_MSDU_OFFSET(skw, desc) \
+-	(test_bit(SKW_FLAG_FW_PN_REUSE, &skw->flags) ? (desc)->pn_reuse.msdu_offset : (desc)->msdu.msdu_offset)
++	((desc)->msdu_offset)
+ 
+ #define SKW_RX_AMSDU_IDX(skw, desc) \
+-	(test_bit(SKW_FLAG_FW_PN_REUSE, &skw->flags) ? (desc)->pn_reuse.amsdu_idx : (desc)->msdu.amsdu_idx)
++	((desc)->amsdu_idx)
+ 
+ #define SKW_RX_PN(skw, desc) \
+-	(test_bit(SKW_FLAG_FW_PN_REUSE, &skw->flags) ? (desc)->pn_reuse.pn : (desc)->pn_not_reuse)
++	((desc)->pn)
+ 
+ enum SKW_RELEASE_REASON {
+ 	SKW_RELEASE_INVALID,
+@@ -211,68 +211,60 @@
+     u32 Mu0Nsts:3;
+ };
+ 
++/*
++ * H96Max: rx descriptor of the SWT6621S firmware (20250618, PN-reuse mode), 22 bytes, frame at
++ * +22 (msdu_offset 74 - SKW_SDIO_RX_DESC_MSDU_OFFSET 52). The Neardi 2024 driver had a 20-byte
++ * layout with the flags elsewhere; with it every frame was trimmed to 0 bytes, filtered as class
++ * 0, or dropped for "tid 10". Each field below was taken from the ODM's own driver for this
++ * firmware (vendor/seekwave/prebuilt-ko/swt6621s_wifi.ko, skw_rx_process / skw_ampdu_reorder /
++ * skw_rx_handler, ARM32) and checked against a received EAPOL-Key 1/4 (research/notes §27):
++ * qos 1, tid 5, filter 5 (EAP), msdu_len 107, msdu_offset 74, snap_match 1. Fields this driver
++ * never reads are reserved.
++ */
+ struct skw_rx_desc {
+-	/* word 14 */
+-	union {
+-		u32 resv;
+-		struct {
+-			u16 msdu_len;
+-			u8 msdu_offset;
+-			u8 amsdu_idx;
+-		}__packed msdu;
+-	};
+-	//u16 pkt_len; //caculate it
+-
+-	/* word 15 */
+-	u16 csum;
+-	u8 msdu_filter;
+-
+-	u8 csum_valid:1;
+-	u8 snap_type:1;
+-	u8 snap_match:1;
+-	u8 vlan:1;
+-	u8 eapol:1;
+-	u8 amsdu_first_idx:1;
+-	u8 amsdu_last_idx:1;
+-	u8 first_msdu_in_buff:1;
+-
+-	/* word 16 */
+-	u16 sn:12; /* seq number */
+-	u16 frag_num:4;
+-
+-	u16 inst_id:2; //mpdu_ra_index
+-	u16 inst_id_valid:1;
+-	u16 more_frag:1;
+-	u32 peer_idx:5;
++	/* +0 */
++	u8 rsvd0:3;
++	u8 is_amsdu:1;            /* ODM: byte 0 bit 3 */
++	u8 rsvd1:4;
++	u8 rsvd2;
++	u16 msdu_len_np;          /* ODM: msdu_len when PN is NOT reused */
++
++	/* +4 */
++	u8 csum_valid:1;          /* ODM deliver: byte 4 bit 0 */
++	u8 snap_type:1;           /* unconfirmed, unused */
++	u8 snap_match:1;          /* ODM deliver: byte 4 bit 2 */
++	u8 retry_frame:1;         /* ODM: byte 4 bit 3 */
++	u8 is_qos_data:1;         /* ODM: byte 4 bit 4 */
++	u8 amsdu_first_idx:1;     /* ODM: byte 4 bit 5 */
++	u8 amsdu_last_idx:1;      /* ODM: byte 4 bit 6 */
++	u8 rsvd3:1;
++	u16 csum;                 /* ODM deliver: u16 at +5 */
++	u8 msdu_filter;           /* ODM: byte 7 (& 0x1f) */
++
++	/* +8 */
++	u32 sn:12;                /* ODM: bits 0-11 */
++	u32 frag_num:4;           /* ODM frag test 0x8f000: bits 12-15 + 19 */
++	u32 inst_id:2;            /* ODM: bits 16-17 */
++	u32 inst_id_valid:1;
++	u32 more_frag:1;          /* bit 19 */
++	u32 peer_idx:5;           /* ODM: bits 20-24 */
+ 	u32 peer_idx_valid:1;
+-	u16 more_data:1;
+-	u16 pm:1;
+-	u16 eosp:1;
+-	u16 ba_session:1;
+-	u16 rcv_in_ps_mode:1;
+-	u16 mac_drop_frag:1;
+-
+-	/* word 17 & word18*/
+-	union {
+-		struct {
+-			u16 msdu_len;
+-			u8  msdu_offset;
+-			u8  amsdu_idx;
+-			u8  pn[2];
+-		}__packed pn_reuse;
+-		u8 pn_not_reuse[6];
+-	};
+-	//u16 credit; //6316 doesn't provide it keep it with 0
+-	u16 tid:4;
+-	u16 rsvd:4;
+-	u16 is_amsdu:1;
+-	u16 is_qos_data:1;
+-	u16 retry_frame:1;
+-	u16 is_ampdu:1;
+-	u16 need_forward:1;//da_ra_diff
+-	u16 is_mc_addr:1; //bc_mc_flag
+-	u16 is_eof:1; //mpdu_eof_flag
+-	u16 rx_dma_wr_comp:1;
++	u32 is_mc_addr:1;         /* ODM reorder: bit 26 */
++	u32 rsvd4:1;
++	u32 tid:4;                /* ODM: bits 28-31 (invalid test: word < 0) */
++
++	/* +12 */
++	u8 pn[4];
++
++	/* +16 */
++	u16 msdu_len;             /* ODM PN-reuse path: u16 at +16 */
++	u8 msdu_offset;           /* ODM: byte 18 */
++	u8 amsdu_idx:6;           /* ODM: byte 19 & 0x3f */
++	u8 need_forward:1;        /* ODM deliver: byte 19 bit 6 */
++	u8 mac_drop_frag:1;       /* ODM: byte 19 bit 7 (sign test) */
++
++	/* +20 */
++	u16 rsvd5;
+ } __packed;
+ 
+ static inline void skw_snap_unmatch_handler(struct sk_buff *skb)

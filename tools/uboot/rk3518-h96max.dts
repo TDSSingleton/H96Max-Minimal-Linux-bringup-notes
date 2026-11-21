@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * H96Max (RK3518) -- u-boot's OWN device tree. Linux never sees this; Linux gets the
+ * DTB that sits inside the `boot` partition.
+ *
+ * Deliberately = rk3528-generic.dts (eMMC + SD + uart0, the config the community
+ * RK3518 itb is built from) plus exactly one addition: the SARADC, so that the
+ * factory recovery button keeps working. Evidence for the button, from the factory
+ * u-boot's own DTB (FIT image 5 of recon/.../uboot.img):
+ *     adc-keys { io-channels = <&saradc 1>; keyup-threshold-microvolt = <1800000>;
+ *                volumeup-key { press-threshold-microvolt = <9>; }; };
+ * i.e. channel 1 idles at 1.8 V and is pulled to ~0 V when pressed. Mainline's
+ * rockchip_dnl_key_pressed() (arch/arm/mach-rockchip/boot_mode.c) reads exactly
+ * saradc channel 1 and treats raw <= 30 as pressed -> BootROM download (maskrom).
+ */
+
+/dts-v1/;
+#include "rk3528.dtsi"
+
+/ {
+	model = "H96Max RK3518";
+	compatible = "rockchip,rk3528";
+
+	aliases {
+		mmc0 = &sdhci;
+		mmc1 = &sdmmc;
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:1500000n8";
+	};
+};
+
+&saradc {
+	/* no vref regulator modelled: the driver falls back to vdd-microvolts */
+	vdd-microvolts = <1800000>;
+	status = "okay";
+};
+
+&sdhci {
+	bus-width = <8>;
+	cap-mmc-highspeed;
+	mmc-hs200-1_8v;
+	no-sd;
+	no-sdio;
+	non-removable;
+	status = "okay";
+};
+
+&sdmmc {
+	bus-width = <4>;
+	cap-sd-highspeed;
+	disable-wp;
+	no-mmc;
+	no-sdio;
+	status = "okay";
+};
+
+&uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0m0_xfer>;
+	status = "okay";
+};

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Once: grow the root filesystem from the 512 MiB image to the whole `userdata` partition
+# (11.4 GiB). Online resize of a mounted ext4 is supported by the kernel.
+M=/var/lib/h96/resized
+[ -e $M ] && exit 0
+dev=$(awk '$2=="/"{print $1}' /proc/mounts)
+mkdir -p /var/lib/h96 /var/log/h96
+if resize2fs "$dev" > /var/log/h96/resize.log 2>&1; then
+  date > $M
+fi

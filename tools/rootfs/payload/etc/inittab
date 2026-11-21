@@ -1,0 +1,11 @@
+# H96Max: tty1 is the HDMI screen and runs h96ui (menus; mpv for playback). No login there; the box
+# driven by an IR remote, not a keyboard). A login prompt stays on tty2 for a USB keyboard.
+::sysinit:/sbin/openrc sysinit
+::sysinit:/sbin/openrc boot
+::wait:/sbin/openrc default
+# H96Max: snapshots of the system to the USB stick at ~30/90/180 s (see the script)
+::once:/usr/local/sbin/h96-stick-report
+tty1::respawn:/usr/local/bin/h96ui
+tty2::respawn:/sbin/getty 38400 tty2
+::ctrlaltdel:/sbin/reboot
+::shutdown:/sbin/openrc shutdown

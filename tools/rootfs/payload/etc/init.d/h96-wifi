@@ -1,0 +1,48 @@
+#!/sbin/openrc-run
+# H96Max WiFi: SeekWave SWT6621S over SDIO (driver ported from Neardi's SDK, research/notes
+# §24-§27). Loads skw_sdio_v20 (SDIO + chip boot: ODM firmware SWT6621S_*_SDIO.bin) and then
+# skw6316 (cfg80211 driver) -> wlan0; then wpa_supplicant (/etc/wpa_supplicant/
+# wpa_supplicant.conf) and DHCP (busybox udhcpc, hostname h96max).
+# Never unloads the modules on stop: reloading only the WiFi half sends the chip into a
+# recovery that fails; a reboot is the clean way to reset it.
+description="WiFi (SWT6621S): driver, wpa_supplicant, DHCP on wlan0"
+CONF=/etc/wpa_supplicant/wpa_supplicant.conf
+
+depend() {
+	# deliberately NOT "provide net": h96-lan already provides it, and OpenRC skipped this
+	# second provider at boot (2026-11-21) -- nothing needs net from WiFi specifically
+	need localmount
+	after h96-lan
+}
+
+start() {
+	ebegin "Starting WiFi (SWT6621S)"
+	E=/lib/modules/$(uname -r)/extra
+	if ! grep -q '^skw_sdio_v20 ' /proc/modules; then
+		insmod $E/skw_sdio_v20.ko || { eend 1 "skw_sdio_v20 did not load"; return 1; }
+		sleep 5     # chip boot: firmware download + loopcheck take ~1 s; leave margin
+	fi
+	if ! grep -q '^skw6316 ' /proc/modules; then
+		insmod $E/skw6316.ko || { eend 1 "skw6316 did not load"; return 1; }
+	fi
+	i=0; while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done
+	[ -e /sys/class/net/wlan0 ] || { eend 1 "no wlan0 after ${i}s"; return 1; }
+	if [ ! -f $CONF ]; then
+		eend 0 "driver up, no $CONF: not connecting"
+		return 0
+	fi
+	ip link set wlan0 up
+	start-stop-daemon -S -b -m -p /run/h96-wpa.pid -x /sbin/wpa_supplicant -- \
+		-s -D nl80211 -i wlan0 -c $CONF
+	start-stop-daemon -S -b -m -p /run/h96-udhcpc-wlan0.pid -x /sbin/udhcpc -- \
+		-f -S -i wlan0 -x hostname:h96max
+	eend $? "wlan0 up, wpa_supplicant + DHCP started"
+}
+
+stop() {
+	ebegin "Stopping WiFi (modules stay loaded)"
+	start-stop-daemon -K -p /run/h96-udhcpc-wlan0.pid 2>/dev/null
+	start-stop-daemon -K -p /run/h96-wpa.pid 2>/dev/null
+	ip link set wlan0 down 2>/dev/null
+	eend 0
+}

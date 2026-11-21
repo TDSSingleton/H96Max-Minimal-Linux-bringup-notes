@@ -1,0 +1,37 @@
+#!/bin/sh
+# H96Max system-info screen on tty1 (HDMI). Placeholder until the LVGL UI; read-only.
+printf '\033[9;0]\033[14;0]\033[?25l'   # console: never blank, no powerdown, hide cursor
+r() { cat "$1" 2>/dev/null; }
+while :; do
+  up=$(cut -d' ' -f1 /proc/uptime); up=${up%.*}
+  t=$(r /sys/class/thermal/thermal_zone0/temp)
+  f=$(r /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq)
+  ms=$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{printf "%d / %d MiB used", (t-a)/1024, t/1024}' /proc/meminfo)
+  root=$(df -h / 2>/dev/null | awk 'NR==2{print $3" used of "$2" ("$5")"}')
+  # eMMC: mmcblkN numbering moves between boots (async MMC probe), so find it by type
+  em=""; for b in /sys/block/mmcblk[0-9]; do [ "$(r $b/device/type)" = MMC ] && em=$b && break; done
+  life=$(r $em/device/life_time); eol=$(r $em/device/pre_eol_info)
+  wifi=$(for d in /sys/bus/sdio/devices/*; do [ -e "$d/vendor" ] && echo "$(r $d/vendor):$(r $d/device)"; done | head -1)
+  ifs=$(ip -o -4 addr show 2>/dev/null | awk '$2!="lo"{print $2" "$4}' | tr '\n' ' ')
+  wl=$(ls /sys/class/net 2>/dev/null | grep -E '^wl' | tr '\n' ' ')
+  printf '\033[H\033[2J'
+  cat <<INFO
+
+   H96Max  --  $(tr -d '\0' < /proc/device-tree/model 2>/dev/null)
+   ==============================================================
+
+   Alpine $(r /etc/alpine-release)     Linux $(uname -r)     host $(hostname)
+   time     $(date '+%Y-%m-%d %H:%M:%S')     up $((up/3600))h $((up%3600/60))m $((up%60))s
+   load     $(cut -d' ' -f1-3 /proc/loadavg)
+   CPU      $(nproc) cores   $([ -n "$f" ] && echo "$((f/1000)) MHz")   $([ -n "$t" ] && echo "$((t/1000)) C")
+   memory   $ms
+   root     $root
+   eMMC     life_time ${life:-?}   pre_eol ${eol:-?}
+
+   WiFi     chip ${wifi:-not found}   interface ${wl:-none yet}
+   network  ${ifs:-no address}
+   ssh      root@<address above>, key build/keys/h96max_ed25519 (tools/h96)
+
+INFO
+  sleep 5
+done

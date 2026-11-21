@@ -1,0 +1,37 @@
+--- a/arch/arm/mach-rockchip/boot_mode.c	2026-11-21 13:18:26.063840725 +0000
++++ b/arch/arm/mach-rockchip/boot_mode.c	2026-11-21 13:18:26.073769464 +0000
+@@ -51,12 +51,24 @@
+ 
+ 	ret = -ENODEV;
+ 	uclass_foreach_dev(dev, uc) {
+-		if (!strncmp(dev->name, "saradc", 6)) {
++		/*
++		 * H96Max: the upstream rk3528.dtsi names the node "adc@ffae0000";
++		 * only vendor trees call it "saradc@...". Without the second match
++		 * the download key was never read at all.
++		 */
++		if (!strncmp(dev->name, "saradc", 6) ||
++		    !strncmp(dev->name, "adc@", 4)) {
+ 			ret = adc_channel_single_shot(dev->name, 1, &val);
+ 			break;
+ 		}
+ 	}
+ 
++	/* H96Max breadcrumb for Linux: what the key read gave (or the error) */
++	if (ret)
++		env_set_hex("h96_adc_err", -ret);
++	else
++		env_set_ulong("h96_adc", val);
++
+ 	if (ret == -ENODEV) {
+ 		pr_warn("%s: no saradc device found\n", __func__);
+ 		return false;
+@@ -92,6 +104,8 @@
+ 
+ 	boot_mode = readl(reg);
+ 	debug("%s: boot mode 0x%08x\n", __func__, boot_mode);
++	/* H96Max breadcrumb for Linux: the boot-mode register as found */
++	env_set_hex("h96_bootmode", boot_mode);
+ 
+ 	/* Clear boot mode */
+ 	writel(BOOT_NORMAL, reg);

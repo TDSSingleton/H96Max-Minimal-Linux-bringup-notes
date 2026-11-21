@@ -1,0 +1,19 @@
+--- a/arch/arm/mach-rockchip/boot_mode.c
++++ b/arch/arm/mach-rockchip/boot_mode.c
+@@ -104,6 +104,16 @@
+ 		debug("%s: enter UMS!\n", __func__);
+ 		env_set("preboot", "setenv preboot; ums mmc 0");
+ 		break;
++	case BOOT_LOADER:
++		/*
++		 * H96Max: Linux `reboot loader` writes 0x5242c301 here (vendor DT
++		 * reboot-mode, mode-loader). This u-boot has no rockusb gadget, so map
++		 * it to the BootROM's own download mode: a no-button way to maskrom.
++		 */
++		printf("reboot loader: entering BootROM download mode\n");
++		set_back_to_bootrom_dnl_flag();
++		do_reset(NULL, 0, 0, NULL);
++		break;
+ 	}
+ 
+ 	return 0;

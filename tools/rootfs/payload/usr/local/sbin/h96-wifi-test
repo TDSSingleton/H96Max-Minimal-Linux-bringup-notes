@@ -1,0 +1,55 @@
+#!/bin/sh
+# H96Max WiFi bring-up test (SeekWave SWT6621S, modules ported from Neardi's SDK).
+# Loads the two modules, brings wlan0 up and SCANS only: no association, no IP, no services.
+# Everything goes to /var/log/h96/wifi-test.txt and, if a USB stick is present, to the stick
+# (synced after every step, so a kernel crash still leaves the log up to that point).
+#
+# Crash guard: a marker is set before insmod and cleared afterwards. If the box died while
+# loading, the marker survives the reboot and this script then SKIPS loading and says so.
+# Re-arm by deleting /var/lib/h96/wifi-loading (e.g. via the stick inbox or a keyboard on tty2).
+KVER=$(uname -r)
+M=/lib/modules/$KVER/extra
+LOG=/var/log/h96/wifi-test.txt
+MARK=/var/lib/h96/wifi-loading
+STICK=""
+mkdir -p /var/log/h96 /var/lib/h96 /mnt/stick
+for b in /dev/sda1 /dev/sda; do
+  [ -b "$b" ] && mount -t vfat "$b" /mnt/stick 2>/dev/null && { STICK=/mnt/stick; break; }
+done
+log() { echo "$*" >> $LOG; [ -n "$STICK" ] && { cp $LOG $STICK/wifi-test.txt; sync; }; }
+: > $LOG
+log "### wifi-test $(date -u)  kernel $KVER"
+log "## sdio: $(for d in /sys/bus/sdio/devices/*; do echo "$(cat $d/vendor):$(cat $d/device)"; done)"
+
+if [ -e $MARK ]; then
+  log "!! previous attempt did not finish (box crashed/hung while loading?) -- NOT loading again."
+  log "   marker: $(cat $MARK). Remove $MARK to retry."
+  log "## dmesg (this boot):"; dmesg | tail -60 >> $LOG
+  [ -n "$STICK" ] && { cp $LOG $STICK/wifi-test.txt; sync; umount $STICK; }
+  exit 0
+fi
+
+date > $MARK; sync
+log "## insmod skw_sdio_v20.ko"
+insmod $M/skw_sdio_v20.ko >> $LOG 2>&1; log "   rc=$?"
+sleep 5
+log "## dmesg after platform load:"; dmesg | grep -iE 'skw|seekwave|sdio|sv6160|firmware' | tail -80 >> $LOG; log ""
+log "## insmod skw6316.ko"
+insmod $M/skw6316.ko >> $LOG 2>&1; log "   rc=$?"
+i=0; while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done
+rm -f $MARK; sync
+log "## interfaces after ${i}s: $(ls /sys/class/net | tr '\n' ' ')"
+log "## iw dev:"; iw dev >> $LOG 2>&1; log ""
+log "## iw phy (bands/modes, trimmed):"; iw phy 2>/dev/null | grep -E 'Wiphy|Band|MHz|\* (managed|AP|monitor)' | head -60 >> $LOG; log ""
+if [ -e /sys/class/net/wlan0 ]; then
+  ip link set wlan0 up >> $LOG 2>&1; log "## wlan0 up rc=$?"
+  sleep 2
+  log "## scan:"
+  iw dev wlan0 scan 2>&1 | grep -E '^BSS|SSID:|signal:|freq:' >> $LOG
+  log "## scan done"
+  ip link set wlan0 down
+fi
+log "## full seekwave dmesg:"; dmesg | grep -iE 'skw|seekwave|sv6160|cfg80211|wlan' | tail -150 >> $LOG
+log "### end"
+[ -n "$STICK" ] && { cp $LOG $STICK/wifi-test.txt; sync; umount $STICK; }
+exit 0

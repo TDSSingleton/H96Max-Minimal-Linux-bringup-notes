@@ -1,0 +1,3 @@
+# our root: the old Android `userdata` partition (p14), ext4 labelled h96root.
+# The initramfs mounts it rw and switch_roots into it; pass 0 = no boot-time fsck of /.
+LABEL=h96root	/	ext4	rw,noatime	0 0

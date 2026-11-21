@@ -1,0 +1,19 @@
+#!/bin/sh
+# see /etc/init.d/h96-lan. Every 3 s: for each network interface whose parent device sits on
+# the USB *host* bus (a USB-Ethernet dongle: r8152, ax88179_178a, asix, cdc_ether, cdc_ncm...),
+# make sure busybox udhcpc runs on it. The onboard gmac (eth0, no jack on this box) is a
+# platform device, so it is never matched.
+while :; do
+	for n in /sys/class/net/*; do
+		ifn=${n##*/}
+		[ "$(basename "$(readlink -f "$n/device/subsystem" 2>/dev/null)")" = usb ] || continue
+		p=/run/udhcpc.$ifn.pid
+		if [ ! -e "$p" ] || ! kill -0 "$(cat "$p")" 2>/dev/null; then
+			drv=$(basename "$(readlink -f "$n/device/driver" 2>/dev/null)")
+			ip link set "$ifn" up
+			logger -t h96-lan "starting udhcpc on $ifn ($drv, $(cat $n/address))"
+			udhcpc -b -S -i "$ifn" -x hostname:h96max -p "$p" >/dev/null 2>&1
+		fi
+	done
+	sleep 3
+done

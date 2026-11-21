@@ -1,0 +1,21 @@
+diff --git a/scripts/dtc/pylibfdt/libfdt.i_shipped b/scripts/dtc/pylibfdt/libfdt.i_shipped
+index e4659489..cf86431e 100644
+--- a/scripts/dtc/pylibfdt/libfdt.i_shipped
++++ b/scripts/dtc/pylibfdt/libfdt.i_shipped
+@@ -15,6 +15,16 @@
+ 
+ %{
+ #define SWIG_FILE_WITH_INIT
++/* Fedora 45 (swig 4.5 + Python 3.15) shim: swig >= 4 dropped pycompat.i, so the
++ * Py2 APIs used by the vendored dtc bindings must be mapped ourselves. Enumerated
++ * from libfdt.i_shipped, not guessed one build at a time. */
++#define PyString_FromString PyUnicode_FromString
++#define PyString_AsString   PyUnicode_AsUTF8
++#define PyInt_AsLong        PyLong_AsLong
++/* swig >= 4 dropped pycompat.i: restore the Py2->Py3 shim for Fedora. */
++#ifndef PyString_FromString
++#define PyString_FromString PyUnicode_FromString
++#endif
+ #include "libfdt.h"
+ 
+ /*

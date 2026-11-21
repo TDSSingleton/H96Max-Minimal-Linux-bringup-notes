@@ -1,0 +1,26 @@
+#!/sbin/openrc-run
+# H96Max Bluetooth: the BT half of the SeekWave SWT6621S combo (SDIO). skw_sdio_v20 (loaded by
+# h96-wifi) creates the BT platform device; skwbt (ported from Neardi's SDK) registers hci0 on
+# it. bluetoothd (BlueZ) then pairs/connects the stick's BLE remote, whose keys arrive as a
+# normal input device (via UHID).
+# The BT address is persisted in /var/lib/skwbt/skwbdaddr, so pairings survive reboots.
+description="Bluetooth (SWT6621S): skwbt driver + bluetoothd"
+
+depend() {
+	need localmount
+	after h96-wifi
+	before bluetooth
+}
+
+start() {
+	ebegin "Starting Bluetooth (SWT6621S)"
+	mkdir -p /var/lib/skwbt
+	E=/lib/modules/$(uname -r)/extra
+	grep -q '^skw_sdio_v20 ' /proc/modules || { eend 1 "skw_sdio_v20 not loaded (h96-wifi)"; return 1; }
+	if ! grep -q '^skwbt ' /proc/modules; then
+		insmod $E/skwbt.ko || { eend 1 "skwbt did not load"; return 1; }
+	fi
+	i=0; while [ ! -e /sys/class/bluetooth/hci0 ] && [ $i -lt 10 ]; do sleep 1; i=$((i+1)); done
+	[ -e /sys/class/bluetooth/hci0 ] || { eend 1 "no hci0 after ${i}s"; return 1; }
+	eend 0 "hci0 up"
+}

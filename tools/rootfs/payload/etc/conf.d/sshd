@@ -1,0 +1,4 @@
+# H96Max: sshd listens on all interfaces (key-only, sshd_config.d/h96.conf); start it
+# after the LAN watcher
+rc_need="localmount"
+rc_after="h96-lan"

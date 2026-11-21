@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# ssh/scp to the box over the LAN dongle:  H96=<ip-or-name> tools/h96   (e.g. H96=h96max.lan)
+# Uses the project's own key and known_hosts; nothing in ~/.ssh is read or written.
+#   tools/h96                 interactive shell
+#   tools/h96 'dmesg | tail'  run a command
+#   tools/h96 put LOCAL REMOTE / tools/h96 get REMOTE LOCAL
+H=${H96:?set H96=<box ip or name>, e.g. H96=h96max.lan tools/h96}
+D=$(cd "$(dirname "$0")/.." && pwd)/build/keys
+O=(-i "$D/h96max_ed25519" -o IdentitiesOnly=yes -o UserKnownHostsFile="$D/known_hosts"
+   -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5)
+case "${1:-}" in
+  put) exec scp "${O[@]}" "$2" "root@$H:$3" ;;
+  get) exec scp "${O[@]}" "root@$H:$2" "$3" ;;
+  *)   exec ssh "${O[@]}" root@$H "$@" ;;
+esac

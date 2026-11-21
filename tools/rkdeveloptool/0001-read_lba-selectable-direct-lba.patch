@@ -1,0 +1,39 @@
+diff --git a/main.cpp b/main.cpp
+index 42bfbab..2ba7580 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -7,6 +7,7 @@
+ 
+ #include   <unistd.h>
+ #include   <dirent.h>
++#include   <stdlib.h>
+ #include "config.h"
+ #include "DefineHeader.h"
+ #include "gpt.h"
+@@ -2561,6 +2562,17 @@ bool read_lba(STRUCT_RKDEVICE_DESC &dev, UINT uiBegin, UINT uiLen, char *szFile)
+ 	UINT iTotalRead = 0,iRead = 0;
+ 	int nSectorSize = 512;
+ 	BYTE pBuf[nSectorSize * DEFAULT_RW_LBA];
++	/* LOCAL PATCH (read-only experiment, not upstream):
++	 * Every read in this tool is issued with the RWMETHOD_IMAGE sub-code, because
++	 * RWMETHOD_LBA is declared in RKComm.h but never passed by any call site. The
++	 * vendor loader on our RK3518 box answers IMAGE reads with real data only for the
++	 * first 32 MiB and returns 0xCC filler above LBA 65536 -- with no error reported.
++	 * The device's own `rcb` output says "Direct LBA: enabled", so make it selectable.
++	 *   RK_DIRECT_LBA=1  -> use RWMETHOD_LBA
++	 *   unset            -> upstream behaviour (RWMETHOD_IMAGE), unchanged
++	 */
++	BYTE readMethod = getenv("RK_DIRECT_LBA") ? RWMETHOD_LBA : RWMETHOD_IMAGE;
++	printf("read method: %s\n", (readMethod == RWMETHOD_LBA) ? "RWMETHOD_LBA (direct)" : "RWMETHOD_IMAGE (default)");
+ 	pComm =  new CRKUsbComm(dev, g_pLogObject, bRet);
+ 	if (bRet) {
+ 		if(szFile) {
+@@ -2574,7 +2586,7 @@ bool read_lba(STRUCT_RKDEVICE_DESC &dev, UINT uiBegin, UINT uiLen, char *szFile)
+ 		while(uiLen > 0) {
+ 			memset(pBuf, 0, nSectorSize * DEFAULT_RW_LBA);
+ 			iRead = (uiLen >= DEFAULT_RW_LBA) ? DEFAULT_RW_LBA : uiLen;
+-			iRet = pComm->RKU_ReadLBA( uiBegin + iTotalRead, iRead, pBuf);
++			iRet = pComm->RKU_ReadLBA( uiBegin + iTotalRead, iRead, pBuf, readMethod);
+ 			if(ERR_SUCCESS == iRet) {
+ 				uiLen -= iRead;
+ 				iTotalRead += iRead;

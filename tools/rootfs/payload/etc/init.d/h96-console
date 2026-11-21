@@ -1,0 +1,21 @@
+#!/sbin/openrc-run
+# H96Max: make the HDMI text console use the whole 1080p screen.
+# The display stack drives HDMI (1080p) and the analog TV-out (576i) from one framebuffer and
+# sizes the console for the smaller one, so the console was 90x36 cells in a 720x576 corner.
+# Turn the TV-out connector off, set the framebuffer to 1920x1080, load a 16x32 font on tty1
+# -> 120x33 cells, readable on a TV. Runs before h96ui (inittab starts it after `default`).
+description="HDMI console: 1080p, TV-out off, 16x32 font"
+
+depend() {
+	need localmount
+}
+
+start() {
+	ebegin "Setting up the HDMI console"
+	dmesg -n 4   # only warnings and worse on the HDMI console; everything stays in dmesg
+	[ -e /sys/class/drm/card0-TV-1/status ] && echo off > /sys/class/drm/card0-TV-1/status
+	fbset -fb /dev/fb0 -g 1920 1080 1920 1080 32 2>/dev/null
+	f=/usr/share/consolefonts/ter-v32n.psf.gz
+	[ -e $f ] && setfont -C /dev/tty1 $f
+	eend 0 "tty1 $(stty -F /dev/tty1 size 2>/dev/null)"
+}

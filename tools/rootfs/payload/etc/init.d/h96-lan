@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+# H96Max: wired LAN through a USB-Ethernet dongle on the USB-A port (the box has no RJ45).
+# A small watcher (every 3 s) starts busybox udhcpc, hostname h96max, on every interface
+# attached through the USB host bus (r8152, ax88179_178a, asix, cdc_ether/ncm... all built
+# into our kernel), whenever one appears, so a
+# dongle plugged in after boot, or behind a hub that enumerates late, still gets an address.
+# The onboard gmac (eth0, no jack on this box) is ignored.
+description="DHCP on USB-Ethernet dongles (hot-plug aware)"
+command=/usr/local/sbin/h96-lan-watch
+command_background=yes
+pidfile=/run/h96-lan-watch.pid
+
+depend() {
+	provide net
+	need localmount
+	before sshd
+}
+
+stop_post() {
+	for p in /run/udhcpc.*.pid; do [ -e "$p" ] && kill "$(cat "$p")" 2>/dev/null; done
+	return 0
+}
