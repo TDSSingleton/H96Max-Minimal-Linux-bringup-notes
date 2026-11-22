@@ -1,0 +1,11 @@
+# Alpine packages the H96Max playback stack needs on top of the base rootfs (build-rootfs.sh
+# installs the same set; push-to-box.sh adds whatever is missing on a live box).
+gstreamer
+gstreamer-tools
+gst-plugins-base
+gst-plugins-good
+gst-plugins-bad
+gst-libav
+alsa-lib
+fuse-exfat
+libdrm-tests

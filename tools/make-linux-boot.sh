@@ -23,8 +23,8 @@
 # because build-kernel.sh embeds it via CONFIG_INITRAMFS_SOURCE.
 set -uo pipefail
 
-ROOT=${ROOT:-$HOME/Sources/ClaudePlayground/H96Max}
-[ -d "$ROOT" ] || ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# the project root: ROOT=/work in the container, otherwise wherever this script lives
+ROOT=${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}
 cd "$ROOT" || { echo "!! cannot cd to ROOT=$ROOT"; exit 1; }
 
 LOGDIR=$ROOT/build/make-linux-boot
@@ -87,7 +87,7 @@ case "$out" in
   *"aarch64"*"GCC"*|*"(GCC)"*) ok "aarch64-linux-gnu-gcc -> $out" ;;
   *) bad "aarch64-linux-gnu-gcc did not answer: ${out:-(no output)}"
      bad "no aarch64 cross compiler here. Run this inside the container:"
-     bad "   podman run -it --rm -v $HOME/Sources/ClaudePlayground/H96Max:/work:z fedora:41 bash"
+     bad "   podman run -it --rm -v $ROOT:/work:z fedora:41 bash"
      bad "   bash /work/tools/bench-check.sh /work && ROOT=/work bash /work/tools/make-linux-boot.sh"
      miss=1 ;;
 esac

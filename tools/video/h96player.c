@@ -1,10 +1,14 @@
 /* h96player -- the H96Max stream player that h96ui runs (NOTES §34-§36).
  *
  *   h96player [-i] [-u user-agent] [-r referer] [-H 'Name: value']... [-b buffer-seconds] [-L low%]
- *             [-p plane-id] [-c connector-id] [-a alsa-device] [-v volume 0..1] URI
+ *             [-p plane-id] [-c connector-id] [-a alsa-device] [-C channels] [-v volume 0..1] URI
  *
  * playbin3 with the hardware path: mppvideodec (VPU, picked by rank) -> NV12 dmabuf -> kmssink on
  * a VOP2 plane above the console (hardware scaling); audio to ALSA. Over gst-launch it adds:
+ *   - -C N (default 2): audio converted to N channels before ALSA. HDMI refuses a channel count
+ *     the TV's speaker allocation does not list ("hdmi-audio-codec: Not able to map channels to
+ *     speakers", EINVAL from hw_params -> alsasink "Could not get/set settings"); plughw passes
+ *     5.1 straight through, so a 5.1 film on a stereo TV failed. -C 0 = as the source.
  *   - HTTP request headers from the playlist (http-user-agent / http-referrer / Kodi "|Header=")
  *     set on the source in "source-setup". hlsdemux2 copies User-Agent and Referer from the
  *     source's request onto every playlist and segment fetch.
@@ -39,9 +43,10 @@ static struct {
   const char *ua, *referer, *plane, *connector, *alsa;
   GPtrArray *headers; /* "Name: value" */
   double volume;
+  int channels; /* 0: as the source */
   guint64 buffer_ns;
   int low_pct;
-} opt = { NULL, NULL, "172", "371", "plughw:CARD=rockchiphdmi,DEV=0", NULL, 0.8, 5 * GST_SECOND, 2 };
+} opt = { NULL, NULL, "172", "371", "plughw:CARD=rockchiphdmi,DEV=0", NULL, 0.8, 2, 5 * GST_SECOND, 2 };
 
 static gint64 t_start;
 static GstElement *pipe_;
@@ -127,16 +132,61 @@ static void on_element_setup (GstElement * playbin, GstElement * e, gpointer u)
 
 static void start_seek (double delta_s);
 
+/* The useful part of a GStreamer debug string: its last line ("file.c(123): func (): /path/
+ * to/element:\nRate 44100Hz not available for playback: Invalid argument" -> the reason). */
+static gchar *dbg_reason (const gchar * dbg)
+{
+  if (!dbg || !*dbg)
+    return NULL;
+  gchar *d = g_strstrip (g_strdup (dbg));
+  const gchar *nl = strrchr (d, '\n');
+  gchar *r = g_strdup (nl ? nl + 1 : d);
+  g_free (d);
+  g_strdelimit (r, "\r\t", ' ');
+  return r;
+}
+
+/* error/warning line: "<message> [<element>: <reason>]". The element and the debug reason are
+ * what tells "Could not get/set settings from/on resource" (no text of its own: alsasink,
+ * rtspsrc, ...) apart; the full debug string goes on a "detail:" line for the log. */
+static void say_problem (const char *kind, GstMessage * m, GError * err, gchar * dbg)
+{
+  const gchar *src = GST_MESSAGE_SRC_NAME (m) ? GST_MESSAGE_SRC_NAME (m) : "?";
+  gchar *why = dbg_reason (dbg);
+  if (why && !strstr (err ? err->message : "", why))
+    say ("%s: %s [%s: %s]", kind, err ? err->message : "unknown", src, why);
+  else
+    say ("%s: %s [%s]", kind, err ? err->message : "unknown", src);
+  if (dbg && *dbg) {
+    gchar *flat = g_strdup (dbg);
+    g_strdelimit (flat, "\r\n\t", ' ');
+    say ("detail: %s", flat);
+    g_free (flat);
+  }
+  g_free (why);
+}
+
 static gboolean on_bus (GstBus * bus, GstMessage * m, gpointer u)
 {
   switch (GST_MESSAGE_TYPE (m)) {
     case GST_MESSAGE_ERROR:{
       GError *err = NULL;
-      gst_message_parse_error (m, &err, NULL);
-      say ("error: %s", err ? err->message : "unknown");
+      gchar *dbg = NULL;
+      gst_message_parse_error (m, &err, &dbg);
+      say_problem ("error", m, err, dbg);
       g_clear_error (&err);
+      g_free (dbg);
       exit_code = 1;
       g_main_loop_quit (loop);
+      break;
+    }
+    case GST_MESSAGE_WARNING:{
+      GError *err = NULL;
+      gchar *dbg = NULL;
+      gst_message_parse_warning (m, &err, &dbg);
+      say_problem ("warning", m, err, dbg);
+      g_clear_error (&err);
+      g_free (dbg);
       break;
     }
     case GST_MESSAGE_EOS:
@@ -374,7 +424,7 @@ int main (int argc, char **argv)
   gst_init (&argc, &argv);
   t_start = g_get_monotonic_time ();
   trace = g_getenv ("H96PLAYER_TRACE") != NULL;
-  while ((c = getopt (argc, argv, "iu:r:H:b:L:p:c:a:v:")) != -1) {
+  while ((c = getopt (argc, argv, "iu:r:H:b:L:p:c:a:C:v:")) != -1) {
     switch (c) {
       case 'u': opt.ua = optarg; break;
       case 'r': opt.referer = optarg; break;
@@ -385,10 +435,11 @@ int main (int argc, char **argv)
       case 'p': opt.plane = optarg; break;
       case 'c': opt.connector = optarg; break;
       case 'a': opt.alsa = optarg; break;
+      case 'C': opt.channels = atoi (optarg); break;
       case 'v': opt.volume = g_ascii_strtod (optarg, NULL); break;
       default:
         fprintf (stderr, "usage: h96player [-i] [-u UA] [-r referer] [-H 'Name: value']... [-b secs]"
-            " [-L low%%] [-p plane] [-c connector] [-a alsa-device] [-v 0..1] URI\n");
+            " [-L low%%] [-p plane] [-c connector] [-a alsa-device] [-C channels] [-v 0..1] URI\n");
         return 2;
     }
   }
@@ -422,6 +473,33 @@ int main (int argc, char **argv)
     g_object_set (as, "device", opt.alsa, NULL);
   else
     g_object_set (as, "sync", TRUE, NULL);
+  if (!asn && opt.channels > 0) {
+    /* downmix/upmix to a channel count the output takes (see -C above) */
+    gchar *desc = g_strdup_printf ("audioconvert ! audioresample ! "
+        "capsfilter caps=audio/x-raw,channels=%d", opt.channels);
+    GError *e = NULL;
+    GstElement *conv = gst_parse_bin_from_description (desc, FALSE, &e);
+    g_free (desc);
+    if (!conv) {
+      say ("error: audio converter: %s", e ? e->message : "unknown");
+      return 1;
+    }
+    GstElement *bin = gst_bin_new ("audio-out");
+    gst_bin_add_many (GST_BIN (bin), conv, as, NULL);
+    /* conv's unlinked ends: its first element's sink, its capsfilter's src */
+    GstPad *in = gst_bin_find_unlinked_pad (GST_BIN (conv), GST_PAD_SINK);
+    GstPad *out = gst_bin_find_unlinked_pad (GST_BIN (conv), GST_PAD_SRC);
+    GstPad *csink = gst_ghost_pad_new ("sink", in), *csrc = gst_ghost_pad_new ("src", out);
+    gst_element_add_pad (conv, csink);
+    gst_element_add_pad (conv, csrc);
+    gst_object_unref (in);
+    gst_object_unref (out);
+    gst_element_link (conv, as);
+    GstPad *bsink = gst_element_get_static_pad (conv, "sink");
+    gst_element_add_pad (bin, gst_ghost_pad_new ("sink", bsink));
+    gst_object_unref (bsink);
+    as = bin;
+  }
   g_object_set (pipe_, "uri", uri, "video-sink", vs, "audio-sink", as,
       "volume", CLAMP (opt.volume, 0.0, 1.0), "buffer-duration", (gint64) opt.buffer_ns, NULL);
   /* no subtitles / visualisations: video + audio only */

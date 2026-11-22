@@ -1,15 +1,19 @@
-//! h96ui: the H96Max console interface on tty1 (HDMI). Lists IPTV subscriptions, imports them
+//! h96ui (EBI, Extremely Basic IPTV): the H96Max console interface on tty1 (HDMI). Lists IPTV subscriptions, imports them
 //! from a USB stick (no typing), plays channels, and keeps playback settings.
 //! Driven by the Bluetooth remote: arrows/OK arrive on the console, Back/Home via evdev
 //! (remote.rs); a keyboard works too (Esc/Backspace = Back).
 
+mod json;
 mod m3u;
+mod names;
 mod play;
 mod remote;
 mod screens;
 mod store;
 mod sys;
 mod term;
+mod wifi;
+mod xtream;
 
 use std::io::Write;
 use std::rc::Rc;
@@ -31,11 +35,17 @@ pub struct Item {
     pub label: String,
     pub right: String,
     pub action: Option<Action>,
+    pub options: Option<Action>, // hold OK / Menu button: the item's options (e.g. Remove)
 }
 
 impl Item {
     pub fn new(label: impl Into<String>, right: impl Into<String>, f: impl Fn(&mut App) + 'static) -> Item {
-        Item { label: label.into(), right: right.into(), action: Some(Rc::new(f)) }
+        Item { label: label.into(), right: right.into(), action: Some(Rc::new(f)), options: None }
+    }
+
+    pub fn with_options(mut self, f: impl Fn(&mut App) + 'static) -> Item {
+        self.options = Some(Rc::new(f));
+        self
     }
 }
 
@@ -72,6 +82,8 @@ pub struct App {
     snapshot: bool,
     usb: Vec<sys::UsbDisk>,
     remote: Option<remote::Remote>,
+    secrets: Vec<String>, // Xtream passwords: never shown on the TV (say() and the player)
+    menu_repeat: bool,    // a held Up/Down scrolls (menus only, not the player)
 }
 
 impl App {
@@ -113,8 +125,19 @@ impl App {
         }
     }
 
+    /// Remembers a secret (an Xtream password) that must never appear on the screen.
+    pub fn add_secret(&mut self, s: &str) {
+        if s.len() >= 3 && !self.secrets.iter().any(|x| x == s) {
+            self.secrets.push(s.to_string());
+        }
+    }
+
+    pub fn redact(&self, s: &str) -> String {
+        self.secrets.iter().fold(s.to_string(), |acc, sec| acc.replace(sec.as_str(), "***"))
+    }
+
     pub fn say(&mut self, msg: impl Into<String>) {
-        self.msg = msg.into();
+        self.msg = self.redact(&msg.into());
         self.msg_until = Some(Instant::now() + Duration::from_secs(6));
     }
 
@@ -144,11 +167,11 @@ impl App {
 
     fn footer(&self) -> String {
         let left = format!(
-            "  h96ui {VERSION} ({BUILD_DATE})  |  Alpine {}  |  Linux {}",
+            "  EBI {VERSION} ({BUILD_DATE})  |  Alpine {}  |  Linux {}",
             sys::alpine_release(),
             sys::kernel_release()
         );
-        let right = "Up/Down  OK  Back  ";
+        let right = "Up/Down  Vol-/+: A-Z  OK  Hold OK: options  Back  ";
         let gap = self.cols as isize - width(&left) - width(right);
         if gap < 1 {
             return format!("{C_FOOTER}{}{C_RESET}", fit(&left, self.cols as isize));
@@ -263,16 +286,26 @@ impl App {
         let deadline = Instant::now() + timeout;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
-            let ms = left.as_millis().min(i32::MAX as u128) as libc::c_int;
+            // a held OK turns into a long press while still held: wake up for it
+            let due = self.remote.as_ref().and_then(|r| r.due(self.menu_repeat));
+            let wait = due.map_or(left, |d| d.min(left));
+            let ms = wait.as_millis().min(i32::MAX as u128) as libc::c_int;
             if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, ms) } <= 0 {
-                return Key::None;
+                let rep = self.menu_repeat;
+                let k = self.remote.as_mut().map_or(Key::None, |r| r.tick(rep));
+                if k != Key::None || Instant::now() >= deadline {
+                    return k;
+                }
+                continue;
             }
             for p in &fds {
                 if p.revents == 0 {
                     continue;
                 }
                 let k = if p.fd == t.fd() {
-                    t.read_now()
+                    let k = t.read_now();
+                    let dup = self.menu_repeat && self.remote.as_ref().is_some_and(|r| r.console_repeat(k));
+                    if dup { Key::None } else { k }
                 } else {
                     self.remote.as_mut().map_or(Key::None, |r| r.read(p.fd))
                 };
@@ -331,6 +364,24 @@ impl App {
                 if let Some(f) = s.items.get(s.sel).and_then(|it| it.action.clone()) {
                     f(self);
                 }
+            }
+            // hold OK, or the remote's Menu button: the selected item's options
+            Key::LongOk | Key::Menu => {
+                let it = s.items.get(s.sel);
+                match (it.and_then(|i| i.options.clone()), it.and_then(|i| i.action.clone())) {
+                    (Some(f), _) => f(self),
+                    (None, Some(f)) if k == Key::LongOk => f(self), // no options: a long OK is an OK
+                    _ => self.say("No options here"),
+                }
+            }
+            // Vol-/Vol+: next / previous first letter (volume only matters while playing);
+            // Vol- goes down the list like Down, Vol+ up like Up
+            Key::VolUp | Key::VolDown if n > 1 => {
+                let labels: Vec<&str> = s.items.iter().map(|it| it.label.as_str()).collect();
+                let (to, letter) = names::letter_jump(&labels, s.sel, k == Key::VolDown);
+                s.sel = to;
+                let msg = format!("{letter}   {} / {n}", to + 1);
+                self.say(msg);
             }
             Key::Back | Key::Left => self.pop(),
             Key::MainMenu => self.go_home(),
@@ -396,6 +447,8 @@ fn write_out(s: &str) {
 // ---------- main ----------
 
 struct Args {
+    xtream_check: Option<String>,
+    xtream_add: Option<String>,
     snapshot: Option<String>,
     allow_quit: bool,
     version: bool,
@@ -403,7 +456,7 @@ struct Args {
 
 /// Accepts -flag, --flag, -flag=value and -flag value (like Go's flag package did).
 fn parse_args() -> Result<Args, String> {
-    let mut a = Args { snapshot: None, allow_quit: false, version: false };
+    let mut a = Args { xtream_check: None, xtream_add: None, snapshot: None, allow_quit: false, version: false };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let name = arg.trim_start_matches('-');
@@ -413,10 +466,12 @@ fn parse_args() -> Result<Args, String> {
         };
         match name {
             "snapshot" => a.snapshot = Some(val.or_else(|| it.next()).ok_or("-snapshot needs a value")?),
+            "xtream-add" => a.xtream_add = Some(val.or_else(|| it.next()).ok_or("-xtream-add needs a file")?),
+            "xtream-check" => a.xtream_check = Some(val.or_else(|| it.next()).ok_or("-xtream-check needs a file")?),
             "allow-quit" => a.allow_quit = true,
             "version" => a.version = true,
             "h" | "help" => {
-                return Err("usage: h96ui [-snapshot main|subs|channels|settings|about|usb] [-allow-quit] [-version]".into())
+                return Err("usage: h96ui [-snapshot main|subs|channels|settings|about|usb|wifi] [-allow-quit] [-version] [-xtream-check FILE] [-xtream-add FILE]".into())
             }
             _ => return Err(format!("unknown flag: {arg}")),
         }
@@ -434,6 +489,41 @@ fn ensure_path() {
     }
 }
 
+/// -xtream-check FILE: log in with the account in FILE and list what the server offers, over
+/// ssh, without the TV. The password is never printed.
+fn xtream_check(path: &str) -> i32 {
+    let text = match std::fs::read(path) {
+        Ok(b) => String::from_utf8_lossy(&b).into_owned(),
+        Err(e) => {
+            eprintln!("{path}: {e}");
+            return 1;
+        }
+    };
+    let Some(acc) = xtream::Account::from_text(&text) else {
+        eprintln!("{path}: no Xtream account in it (need a get.php/player_api.php link, or server/username/password lines)");
+        return 1;
+    };
+    println!("server {}  user {}  User-Agent {}", acc.server, acc.username, acc.user_agent);
+    let info = match acc.info() {
+        Ok(i) => i,
+        Err(e) => {
+            println!("login: FAILED: {e}");
+            return 1;
+        }
+    };
+    let exp = info.exp_date.filter(|t| *t > 0).map(|t| sys::format_time(t, "%Y-%m-%d")).unwrap_or("never".into());
+    println!("login: ok  status {}  expires {exp}  connections {}/{}  live format {}",
+        info.status, info.active_cons, info.max_connections, info.live_ext);
+    for (label, kind) in [("live", xtream::Kind::Live), ("movies", xtream::Kind::Movies), ("series", xtream::Kind::Series)] {
+        match acc.categories(kind) {
+            Ok(c) => println!("{label}: {} categories ({})", c.len(),
+                c.iter().take(5).map(|(_, n)| n.as_str()).collect::<Vec<_>>().join(", ")),
+            Err(e) => println!("{label}: {}", acc.redact(&e)),
+        }
+    }
+    0
+}
+
 fn main() {
     ensure_path();
     let args = match parse_args() {
@@ -443,8 +533,29 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if let Some(f) = args.xtream_check {
+        std::process::exit(xtream_check(&f));
+    }
+    if let Some(f) = args.xtream_add {
+        // same path as the USB import: log in, then store as subs/<host>.xtream (mode 0600)
+        let acc = std::fs::read(&f).ok().and_then(|b| xtream::Account::from_text(&String::from_utf8_lossy(&b)));
+        let Some(acc) = acc else {
+            eprintln!("{f}: no Xtream account in it");
+            std::process::exit(1);
+        };
+        match store::import_xtream(&acc) {
+            Ok(store::Imported::Account(name, st)) => println!("added Xtream account '{name}' (status: {st})"),
+            Ok(store::Imported::Already(name)) => println!("already added as '{name}'"),
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("login failed: {}", acc.redact(&e));
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if args.version {
-        println!("h96ui {VERSION} ({BUILD_DATE})");
+        println!("EBI (Extremely Basic IPTV) {VERSION} ({BUILD_DATE})");
         return;
     }
     let mut a = App {
@@ -461,6 +572,8 @@ fn main() {
         snapshot: false,
         usb: sys::usb_disks(),
         remote: None,
+        secrets: Vec::new(),
+        menu_repeat: false,
     };
     let m = screens::main_menu();
     a.push(m);
@@ -492,7 +605,9 @@ fn main() {
     let mut last_min = -1;
     a.draw();
     loop {
+        a.menu_repeat = true;
         let k = a.read_key(Duration::from_secs(1));
+        a.menu_repeat = false;
         if k != Key::None {
             if !a.handle(k) {
                 break;

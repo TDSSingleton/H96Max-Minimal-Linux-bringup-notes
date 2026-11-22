@@ -361,3 +361,80 @@ dropping BT/CFG80211/MAC80211/WIRELESS); boot image 56fdbede… (not yet written
 Neardi (no-op set_fs on 5.18+, BD address in /var/lib/skwbt). Staged on the box: 3 modules,
 sv6160.nvbin, h96-bt, bluez + dbus + bluetooth services.
 17:42 WRITTEN boot @0xc800 = linux-boot.bt-56fdbede.img (BT kernel), read-back OK (was 657b74d0).
+
+## 2026-11-21 evening → 11-22 night: hardware video, the Rust UI, a real IPTV player
+
+### VPU and display (NOTES §33-§34)
+Built Rockchip MPP for Alpine/musl in the arm64 container. MPP did not know the RK3518 ->
+patch aliasing it to rk3528. `mpi_dec_test`: 1080p60 H.264 at **166 fps, ~6 % CPU** (software was
+0.33×). librga from source (airockchip's is glibc binaries only; musl fixes). gstreamer-rockchip
+`mppvideodec` + kmssink: the first plane I picked (Esmart0-win1) shares the console layer's
+format and blinked **green** on the user's TV; plane 172 (Esmart1-win0) is independent. kmssink
+waited for vblank twice (26 fps) -> `skip-vsync`. Live HLS over WiFi with HDMI audio: 60 fps, 8 % CPU.
+Video in a rectangle over the console (render-rectangle) confirmed on the TV; the user chose:
+**UI stays a CLI, no GPU**.
+
+### h96ui rewritten in Rust (user request)
+1:1 port of the Go UI (0.2.0), checked byte-for-byte against the Go `-snapshot` output on the
+box; 541 KB instead of 6 MB. Then: USB hotplug detection (/sys/block poll; no hotplug daemon runs,
+devtmpfs makes the nodes), exFAT via fuse-exfat, NTFS, duplicate-import detection (0.2.1).
+
+### Playback integration and the bugs real channels found (NOTES §35-§37)
+- The user got **stuck in mpv**: the remote's Back is KEY_BACK, which the console drops. Recorded
+  all remote keys with evtest; h96ui now reads Back/Home (and later OK = KEY_SELECT 353, beyond the
+  0-255 console keymap) from evdev, chosen by capability.
+- 576p channel: `drmModeSetPlane: No space left on device` = kmssink uses the PAR-corrected
+  width as the source rectangle -> patched kmssink, pinned to Alpine's gst-plugins-bad 1.28.3.
+- 1080p "hangs": not the box (WiFi ~200 Mbit/s) but a server that gives ~12 Mbit/s per
+  connection for an 8.8 Mbit/s stream. -> **h96player** (C, GStreamer API): prebuffer with
+  hysteresis, playlist HTTP headers on every HLS request (source-setup; hlsdemux2 copies UA and
+  Referer), parseable status. Slowest channel: 3 s of video in 35 s before, 52 s at 50 fps after.
+- h96ui could not find h96player: busybox init's PATH lacks /usr/local/bin (0.3.2).
+- On-demand videos as their own list per subscription; h96player control protocol (pause, seek,
+  rect, volume); the box OSD. Seeking **deadlocked** playbin; found with gdb and Alpine's -dbg
+  packages: a lock cycle between playbin's input-selector reset after hlsdemux2 re-created its
+  pads, and my status query. -> playbin3, async state changes, no queries during seeks; 8-seek
+  test passes on the TV. Volume/mute keys with an on-screen level (0.4.1).
+
+### Xtream (NOTES §38) and the fixup kit (NOTES §39)
+Native Xtream Codes support (0.5.0): accounts from a USB file (provider link or
+server/username/password lines), mode 0600, Live/Movies/Series with categories and seasons,
+account status, VLC-style User-Agent. Tested against a mock panel that refuses other
+User-Agents; progressive-MP4 films seek fine. Then the fixup kit: `h96-doctor`, `h96-fix`,
+`push-to-box.sh`, `docs/log/troubleshooting.md`; the rootfs build now includes the whole video
+stack and the Rust UI (`h96root.img` `3749043b…`, built, not written).
+No flash writes in this phase; everything was installed live over ssh.
+
+### 2026-11-22 01:35: "streaming is gone" + "can't delete subscriptions" (NOTES §40)
+After a reboot no live channel played. Not the player, decoder (2M had switched to MPEG-2,
+which the VPU decodes at 505 fps), clock or playlist: the box downloaded from the distant server
+at 0.30 Mbit/s against the PC's 11.5, with no loss. A/B with the SeekWave driver's debugfs
+`rx_reorder` switch: 6.59 Mbit/s off vs 0.30 on. Turned off at boot in h96-wifi; all three
+failing channels play again. Deleting subscriptions: Remove existed but only at the bottom of
+the subscription's menu -> h96ui 0.5.1: hold OK (timed from evdev press/release) or Menu on a
+subscription opens Open/Remove. First real push-to-box run (found and fixed its own pipefail
+bug); doctor: 0 problems. The user's father's Xtream subscription was not touched.
+
+### 2026-11-22 evening: EBI 0.6 (NOTES §41-§42) and the access lock-down
+- **Name:** the frontend is **EBI (Extremely Basic IPTV)**; on-screen text only, the binary and
+  paths stay `h96ui`. New standing rule: provider files on the box are off-limits except
+  `ma.m3u` (rules-and-lessons §10).
+- **WiFi without ssh** (0.6.0): first designed as a network scan + on-screen keyboard, cut down at
+  the user's request to "Add WiFi from USB" (a `.txt` with `ssid=`/`password=`). A test caught a
+  priority bug before it shipped (a re-added network got a lower priority than the others).
+- **Faster lists:** held Up/Down did nothing because the remote's input has no EV_REP -> evdev-timed
+  autoscroll. Vol keys as a letter jump; then, from the user's feedback, shared provider leads
+  are stripped (0.6.1: short codes; 0.6.3: encased words of any length such as `[Italy]`,
+  `[Serie]`), lists are sorted A-Z by the same names, and Vol-/Vol+ were flipped (0.6.2).
+- **"Could not get/set settings from/on resource":** a generic GStreamer message whose reason
+  h96player threw away. Step 1 was verbosity (element + debug reason on the error line, a
+  per-run GStreamer log); the first real hit then said `alsasink: Unable to set hw params` and
+  dmesg `Not able to map channels to speakers`: 5.1 audio on a stereo TV. Reproduced with a
+  6-channel silent test source, fixed with a stereo downmix in front of alsasink (0.6.4,
+  h96player `-C`).
+- **Access:** ssh was already key-only, but root's password was empty (Alt+F2 on a USB keyboard =
+  root shell). Now `*` (not `!`, which this OpenSSH treats as locked and refuses keys too),
+  `AuthenticationMethods publickey`, `MaxAuthTries 3`; applied behind a 120 s auto-revert that a
+  fresh key login cancelled; `h96-doctor` checks both; `build-rootfs.sh` sets `*` too.
+- Five pushes with `push-to-box.sh` (0.6.0 → 0.6.4), each with consent; doctor 0 problems each
+  time. No flash writes; no provider file read.

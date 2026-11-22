@@ -42,7 +42,7 @@ like a hang. Lesson encoded: every `make` gets `</dev/null`, output is streamed 
 exit status via `PIPESTATUS`, and a `syncconfig`/`scripts_dtc`/`tools` pre-flight runs before
 the long build.
 
-**Container:** `podman run -it --rm -v ~/Sources/ClaudePlayground/H96Max:/work:z fedora:41`.
+**Container:** from the project root, `podman run -it --rm -v "$PWD":/work:z fedora:41`.
 `:z` is mandatory — the tree is `user_home_t` under **Enforcing** SELinux and container labels
 can't read it ("not a git repository" was really a label denial). Undo with
 `restorecon -RF`. Rootless podman maps container root → uid 1000, so outputs stay user-owned.

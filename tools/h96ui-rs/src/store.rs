@@ -26,8 +26,9 @@ fn read_text(p: &Path) -> std::io::Result<String> {
 #[derive(Clone)]
 pub struct Subscription {
     pub name: String,
-    pub path: PathBuf, // .m3u
+    pub path: PathBuf, // .m3u, or .xtream for an Xtream account
     pub url: String,   // empty for file subscriptions
+    pub xtream: Option<crate::xtream::Account>,
 }
 
 fn with_ext(p: &Path, ext: &str) -> PathBuf {
@@ -42,9 +43,13 @@ pub fn list_subscriptions() -> Vec<Subscription> {
         .filter_map(|e| {
             let p = e.path();
             let fname = p.file_name()?.to_str()?.to_string();
+            if let Some(name) = fname.strip_suffix(".xtream") {
+                let acc = crate::xtream::Account::from_text(&read_text(&p).ok()?)?;
+                return Some(Subscription { name: name.to_string(), path: p, url: String::new(), xtream: Some(acc) });
+            }
             let name = fname.strip_suffix(".m3u")?.to_string();
             let url = read_text(&with_ext(&p, "url")).map(|s| s.trim().to_string()).unwrap_or_default();
-            Some(Subscription { name, path: p, url })
+            Some(Subscription { name, path: p, url, xtream: None })
         })
         .collect();
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then(a.name.cmp(&b.name)));
@@ -53,6 +58,9 @@ pub fn list_subscriptions() -> Vec<Subscription> {
 
 impl Subscription {
     pub fn channels(&self) -> Result<Vec<Channel>, String> {
+        if self.xtream.is_some() {
+            return Err("an Xtream account has no playlist file".into());
+        }
         read_text(&self.path).map(|t| parse_m3u(&t)).map_err(|e| io_text(&e, &self.path))
     }
 
@@ -105,7 +113,7 @@ fn unique_name(base: &str) -> String {
     };
     let mut name = base.clone();
     let mut i = 2;
-    while subs_dir().join(format!("{name}.m3u")).exists() {
+    while subs_dir().join(format!("{name}.m3u")).exists() || subs_dir().join(format!("{name}.xtream")).exists() {
         name = format!("{base} ({i})");
         i += 1;
     }
@@ -133,8 +141,28 @@ pub fn subscription_with_url(url: &str) -> Option<String> {
     list_subscriptions().into_iter().find(|s| s.url == url).map(|s| s.name)
 }
 
+/// Logs in to an Xtream account and stores it (mode 0600) as subs/<host>.xtream.
+pub fn import_xtream(acc: &crate::xtream::Account) -> Result<Imported, String> {
+    if let Some(s) = list_subscriptions().into_iter().find(|s| {
+        s.xtream.as_ref().is_some_and(|x| x.server == acc.server && x.username == acc.username)
+    }) {
+        return Ok(Imported::Already(s.name));
+    }
+    let info = acc.info()?;
+    fs::create_dir_all(subs_dir()).map_err(|e| e.to_string())?;
+    let name = unique_name(&acc.host().replace(':', " "));
+    let dst = subs_dir().join(format!("{name}.xtream"));
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&dst).map_err(|e| io_text(&e, &dst))?;
+    f.write_all(acc.to_file().as_bytes()).map_err(|e| io_text(&e, &dst))?;
+    let st = if info.status.is_empty() { "ok".to_string() } else { info.status.to_lowercase() };
+    Ok(Imported::Account(name, st))
+}
+
 pub enum Imported {
-    New(String, usize),
+    New(String, usize),     // playlist: name, channel count
+    Account(String, String), // Xtream: name, account status
     Already(String),
 }
 
@@ -170,9 +198,13 @@ const MAX_DOWNLOAD: usize = 64 << 20;
 
 /// HTTP(S) download via busybox wget (+ ssl_client), 60 s timeout, 64 MiB cap.
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
-    let ua = format!("h96ui/{}", crate::VERSION);
+    fetch_with(url, &format!("h96ui/{}", crate::VERSION))
+}
+
+/// fetch() with a given User-Agent (Xtream panels often refuse unknown players).
+pub fn fetch_with(url: &str, ua: &str) -> Result<Vec<u8>, String> {
     let o = Command::new("wget")
-        .args(["-q", "-T", "60", "-U", &ua, "-O", "-", "--", url])
+        .args(["-q", "-T", "60", "-U", ua, "-O", "-", "--", url])
         .output()
         .map_err(|e| format!("wget: {e}"))?;
     if !o.status.success() {
@@ -219,11 +251,13 @@ pub struct Settings {
     pub audio: String,  // hdmi | spdif | analog
     pub aspect: String, // fit | stretch | fill
     pub decoder: String, // hardware (VPU + display plane) | software (mpv)
+    pub order: String,   // az (names.rs az_order) | provider (as the playlist/panel lists them)
+    pub channels: String, // stereo (downmix: HDMI refuses 5.1 on a stereo TV) | source
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { cache_secs: 5, deinterlace: false, volume: 80, audio: "hdmi".into(), aspect: "fit".into(), decoder: "hardware".into() }
+        Settings { cache_secs: 5, deinterlace: false, volume: 80, audio: "hdmi".into(), aspect: "fit".into(), decoder: "hardware".into(), order: "az".into(), channels: "stereo".into() }
     }
 }
 
@@ -251,6 +285,8 @@ impl Settings {
                 ("audio", Json::Str(s)) => self.audio = s,
                 ("aspect", Json::Str(s)) => self.aspect = s,
                 ("decoder", Json::Str(s)) => self.decoder = s,
+                ("order", Json::Str(s)) => self.order = s,
+                ("channels", Json::Str(s)) => self.channels = s,
                 _ => {}
             }
         }
@@ -258,9 +294,10 @@ impl Settings {
 
     pub fn to_json(&self) -> String {
         format!(
-            "{{\n  \"cache_secs\": {},\n  \"deinterlace\": {},\n  \"volume\": {},\n  \"audio\": {},\n  \"aspect\": {},\n  \"decoder\": {}\n}}\n",
+            "{{\n  \"cache_secs\": {},\n  \"deinterlace\": {},\n  \"volume\": {},\n  \"audio\": {},\n  \"aspect\": {},\n  \"decoder\": {},\n  \"order\": {},\n  \"channels\": {}\n}}\n",
             self.cache_secs, self.deinterlace, self.volume, json_str(&self.audio), json_str(&self.aspect),
-            json_str(&self.decoder)
+            json_str(&self.decoder), json_str(&self.order),
+            json_str(&self.channels)
         )
     }
 
@@ -368,6 +405,30 @@ fn json_flat_object(t: &str) -> Vec<(String, Json)> {
 mod tests {
     use super::*;
 
+    /// Removing works for all three kinds (playlist file, URL subscription, Xtream account),
+    /// in a scratch data dir (H96UI_DATA), never the box's real subscriptions.
+    #[test]
+    fn remove_each_kind() {
+        let d = std::env::temp_dir().join(format!("h96ui-test-{}", std::process::id()));
+        let subs = d.join("subs");
+        fs::create_dir_all(&subs).unwrap();
+        std::env::set_var("H96UI_DATA", &d);
+        fs::write(subs.join("Plain list.m3u"), "#EXTM3U\n#EXTINF:-1,A\nhttp://a.example/1\n").unwrap();
+        fs::write(subs.join("online.m3u"), "#EXTM3U\n#EXTINF:-1,B\nhttp://b.example/1\n").unwrap();
+        fs::write(subs.join("online.url"), "https://b.example/list.m3u\n").unwrap();
+        fs::write(subs.join("tv.example 8080.xtream"), "server=http://tv.example:8080\nusername=u\npassword=p\n").unwrap();
+        let all = list_subscriptions();
+        assert_eq!(all.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), vec!["online", "Plain list", "tv.example 8080"]);
+        assert_eq!(all[0].url, "https://b.example/list.m3u");
+        assert!(all[2].xtream.is_some());
+        for s in &all {
+            s.remove().unwrap();
+        }
+        assert!(list_subscriptions().is_empty());
+        assert_eq!(fs::read_dir(&subs).unwrap().count(), 0, "every file of every kind is gone");
+        let _ = fs::remove_dir_all(&d);
+    }
+
     #[test]
     fn settings_roundtrip() {
         let mut s = Settings::default();
@@ -391,6 +452,6 @@ mod tests {
     #[test]
     fn settings_go_format() {
         let s = Settings::default();
-        assert_eq!(s.to_json(), "{\n  \"cache_secs\": 5,\n  \"deinterlace\": false,\n  \"volume\": 80,\n  \"audio\": \"hdmi\",\n  \"aspect\": \"fit\",\n  \"decoder\": \"hardware\"\n}\n");
+        assert_eq!(s.to_json(), "{\n  \"cache_secs\": 5,\n  \"deinterlace\": false,\n  \"volume\": 80,\n  \"audio\": \"hdmi\",\n  \"aspect\": \"fit\",\n  \"decoder\": \"hardware\",\n  \"order\": \"az\",\n  \"channels\": \"stereo\"\n}\n");
     }
 }

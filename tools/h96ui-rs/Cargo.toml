@@ -1,6 +1,6 @@
 [package]
 name = "h96ui"
-version = "0.4.1"
+version = "0.6.4"
 edition = "2021"
 description = "H96Max console interface on tty1 (HDMI), driven by the Bluetooth remote"
 publish = false

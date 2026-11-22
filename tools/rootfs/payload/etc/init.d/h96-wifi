@@ -27,6 +27,11 @@ start() {
 	fi
 	i=0; while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done
 	[ -e /sys/class/net/wlan0 ] || { eend 1 "no wlan0 after ${i}s"; return 1; }
+	# The driver's A-MPDU rx reorder buffer stalls TCP on long-RTT paths: 0.30 vs 6.6 Mbit/s
+	# from a 74 ms server with it on/off (NOTES §40; LAN copies hide it). Off until the driver
+	# is fixed: TCP handles the occasional out-of-order frame itself.
+	grep -q " /sys/kernel/debug " /proc/mounts || mount -t debugfs none /sys/kernel/debug
+	for f in /sys/kernel/debug/skwifi/*/rx_reorder; do [ -e "$f" ] && echo disable > "$f"; done
 	if [ ! -f $CONF ]; then
 		eend 0 "driver up, no $CONF: not connecting"
 		return 0

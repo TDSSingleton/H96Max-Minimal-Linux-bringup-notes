@@ -20,6 +20,7 @@ pub enum Key {
     // remote buttons the console drops (read from evdev, see remote.rs)
     MainMenu, // the remote's Home button
     Menu,
+    LongOk,   // OK held LONG_PRESS (remote.rs): an item's options
     VolUp,
     VolDown,
     Mute,

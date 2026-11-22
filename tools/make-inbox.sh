@@ -6,6 +6,7 @@
 #                         build/keys/h96max_ed25519), stick report, info screen
 #   WiFi (not auto-loaded): skw_sdio_v20.ko + skw6316.ko, SWT6621S firmware, and the
 #                         /usr/local/sbin/h96-wifi-test command
+#   h96ui (Rust, build/h96ui/h96ui) and the fixup kit (tools/fixup/h96-doctor, h96-fix)
 set -euo pipefail
 ROOT=${ROOT:-$(cd "$(dirname "$0")/.." && pwd)}
 cd "$ROOT"
@@ -14,6 +15,11 @@ KVER=$(cat downloads/kernel-rockchip/include/config/kernel.release)
 mkdir -p $OUT
 T=$(mktemp -d); trap 'rm -rf $T' EXIT
 cp -a tools/rootfs/payload/. $T/
+# h96ui: the Rust build (tools/h96ui-rs/build.sh), never a stale copy left in the payload dir
+[ -f build/h96ui/h96ui ] || { echo "!! build/h96ui/h96ui missing: run tools/h96ui-rs/build.sh"; exit 1; }
+install -m 0755 build/h96ui/h96ui $T/usr/local/bin/h96ui
+# fixup kit: h96-doctor (read-only check) and h96-fix (repairs), docs/log/troubleshooting.md
+install -m 0755 tools/fixup/h96-doctor tools/fixup/h96-fix $T/usr/local/sbin/
 for k in $S/platform/skw_sdio_v20.ko $S/skwifi/skw6316.ko $S/skwbt/skwbt.ko; do
   [ "$(modinfo -F vermagic $k | xargs)" = "$KVER SMP mod_unload aarch64" ] || { echo "!! $k vermagic: $(modinfo -F vermagic $k)"; exit 1; }
   install -D -m 0644 $k $T/lib/modules/$KVER/extra/${k##*/}

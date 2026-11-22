@@ -20,7 +20,7 @@
 # u-boot-rockchip.bin are DELETED after the build so they cannot be written by mistake.
 #
 # Run inside the fedora:41 container, project mounted at /work with :z:
-#   podman run --rm -v ~/Sources/ClaudePlayground/H96Max:/work:z fedora:41 \
+#   podman run --rm -v "$PWD":/work:z fedora:41 \
 #     bash -c 'dnf -y -q install <see NEED below> && ROOT=/work bash /work/tools/build-uboot.sh'
 # Touches no device. Prints the write commands; does not run them.
 set -uo pipefail

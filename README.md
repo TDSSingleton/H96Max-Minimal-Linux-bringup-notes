@@ -5,7 +5,9 @@ small, self-built **arm64 Linux** system. The result boots our own 64-bit u-boot
 vendor kernel, runs Alpine Linux, and drives a console interface on HDMI that you operate with the
 stick's Bluetooth remote.
 
-**Status:** the hardware layer is complete. The next milestone is hardware video decoding (VPU).
+**Status:** a working IPTV stick. Hardware video decoding (VPU) plays live channels and on-demand
+videos from M3U playlists and Xtream accounts, operated with the stick's remote. No GPU involved.
+When something breaks: [`docs/log/troubleshooting.md`](docs/log/troubleshooting.md).
 
 ## Preface
 
@@ -32,25 +34,35 @@ Take control back of your devices, it is time.
   boots with the factory device tree and HDMI console.
 - **Alpine Linux 3.24 root filesystem.** It is installed in the former Android `userdata`
   partition (11 GiB), is reproducible from a build script, and is reachable over SSH with key-only
-  login.
+  login (root has no usable password, so no console login without the key either).
 - **WiFi (2.4 and 5 GHz, WPA2).** We ported the SeekWave driver from a Neardi RK3588 SDK and
   rewrote its RX descriptor handling from the ODM's shipped driver. WiFi comes up at boot.
 - **Bluetooth and remote control.** We ported the `skwbt` driver and diagnosed a firmware
   codec-query crash. The stick's BLE remote pairs and survives reboots. The stick has no IR
   receiver, and CEC is unavailable.
-- **h96ui console interface.** A small Go menu on a full-resolution 1080p console, operated with
-  the remote.
-- **Video groundwork.** We measured software playback at 0.25–0.33× realtime, which is not
-  viable, and documented a plan for hardware decode (Rockchip MPP, VOP2 planes, optional Mali-450).
+- **EBI (Extremely Basic IPTV), the console frontend (Rust, binary `h96ui`).** A small static
+  binary (no dependencies beyond `libc`) on a full-resolution 1080p console, operated with the
+  remote: subscriptions and WiFi networks from a USB stick (M3U files, playlist URLs, Xtream
+  accounts, `ssid=`/`password=` files), live channels and on-demand videos, Xtream Live TV /
+  Movies / Series with categories and seasons, A-Z lists that ignore provider prefixes like
+  `|FR|` or `[Italy]`, a Vol-key letter jump and hold-to-scroll.
+- **Hardware video without a GPU.** Rockchip MPP on Alpine/musl (patched for the RK3518), 1080p60
+  H.264 decoded at 166 fps with ~6 % CPU; frames go zero-copy onto a VOP2 display plane above the
+  console. Our player `h96player` (GStreamer playbin3) adds playlist HTTP headers, a prebuffer
+  for slow servers, pause/seek/volume, an on-screen info box, a stereo downmix for HDMI, and error messages that
+  name the failing element and its reason. A kmssink bug that rejected
+  anamorphic SD channels is patched.
+- **Fixup kit.** `h96-doctor` checks every layer and names the fix; `h96-fix` repairs the known
+  failure modes; `push-to-box.sh` updates a live box over ssh.
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
-| `tools/` | Build, flash-preparation and recovery scripts; u-boot DT, config and patches (`tools/uboot/`); rkdeveloptool patch (`tools/rkdeveloptool/`); rootfs overlay; h96ui source; SeekWave WiFi/BT port as a patch on Neardi's driver (`tools/wifi/seekwave-h96max.patch`) |
+| `tools/` | Build, flash-preparation and recovery scripts; u-boot DT, config and patches (`tools/uboot/`); rkdeveloptool patch (`tools/rkdeveloptool/`); rootfs overlay; h96ui source (`tools/h96ui-rs/`, Rust; the old Go version in `tools/h96ui/`); video stack build, patches and `h96player` (`tools/video/`); fixup kit (`tools/fixup/`); SeekWave WiFi/BT port as a patch on Neardi's driver (`tools/wifi/seekwave-h96max.patch`) |
 | `vendor/` | Reference u-boot images. The SeekWave firmware (`vendor/seekwave/`) comes from the stick's own Android partitions and is not tracked |
 | `docs/log/` | Project log: current status, bring-up journal, standing rules and lessons. Start with [`docs/log/status-and-resume.md`](docs/log/status-and-resume.md) |
-| `research/notes/` | Technical notes (§1–§33). Index: [`research/notes/README.md`](research/notes/README.md) |
+| `research/notes/` | Technical notes (§1–§39). Index: [`research/notes/README.md`](research/notes/README.md) |
 | `downloads/`, `research/neardi-3588-sdk-linux` | Upstream sources, tracked as **git submodules** (see `.gitmodules`) |
 | `build/` | Build outputs, logs and device captures (local only, not tracked) |
 
@@ -84,9 +96,10 @@ section of [`docs/log/status-and-resume.md`](docs/log/status-and-resume.md).
 
 ## Roadmap
 
-1. Hardware video decode: Rockchip MPP on Alpine, output to a VOP2 plane, then integration into
-   the h96ui player.
-2. Map the remaining remote keys (Back, Home, volume) to h96ui and player actions.
-3. Fold the changes made live on the device back into a reproducible rootfs image.
-4. Clean up the kernel command line, then possibly reclaim Android's leftover partitions (about
+1. Try a real Xtream account (so far only a mock panel), then remove the mock subscription.
+2. An info bar drawn over the video (a transparent display layer above it, drawn by h96player).
+3. Deinterlacing for SD channels (IEP2 hardware) and clean 60p output.
+4. Fold the live box into a userdata reflash from the reproducible image (keeping WiFi PSK,
+   Bluetooth address, remote pairing and subscriptions).
+5. Clean up the kernel command line, then possibly reclaim Android's leftover partitions (about
    3 GiB).

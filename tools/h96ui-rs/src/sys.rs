@@ -70,6 +70,20 @@ pub fn local_time(fmt: &str) -> String {
     }
 }
 
+/// strftime() of a Unix time in the local time zone.
+pub fn format_time(t: i64, fmt: &str) -> String {
+    let fmt = std::ffi::CString::new(fmt).unwrap_or_default();
+    unsafe {
+        #[allow(deprecated)] // 64-bit on aarch64 musl already
+        let t = t as libc::time_t;
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        let mut buf = [0u8; 64];
+        let n = libc::strftime(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), fmt.as_ptr(), &tm);
+        String::from_utf8_lossy(&buf[..n]).into_owned()
+    }
+}
+
 pub fn local_minute() -> i32 {
     unsafe {
         let t = libc::time(std::ptr::null_mut());
@@ -199,6 +213,7 @@ pub fn unmount_usb() {
 pub enum ImportKind {
     Playlist,
     Urls,
+    Xtream(crate::xtream::Account),
 }
 
 #[derive(Clone)]
@@ -220,6 +235,15 @@ pub fn find_importables() -> Vec<Importable> {
             }
             let p = e.path();
             let ext = p.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
+            // an Xtream account (provider link or server/username/password lines) wins over
+            // "a list of playlist URLs": its get.php link would otherwise be downloaded as a
+            // (huge) flat M3U
+            if matches!(ext.as_str(), "txt" | "url" | "xtream") {
+                if let Some(acc) = fs::read(&p).ok().and_then(|b| crate::xtream::Account::from_text(&String::from_utf8_lossy(&b))) {
+                    out.push(Importable { path: p, kind: ImportKind::Xtream(acc) });
+                    continue;
+                }
+            }
             match ext.as_str() {
                 "m3u" | "m3u8" => out.push(Importable { path: p, kind: ImportKind::Playlist }),
                 "txt" | "url" if !crate::store::urls_in(&p).is_empty() => {

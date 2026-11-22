@@ -18,6 +18,8 @@ const EV_KEY: u16 = 1;
 const KEY_MUTE: u16 = 113;
 const KEY_VOLUMEDOWN: u16 = 114;
 const KEY_VOLUMEUP: u16 = 115;
+const KEY_UP: u16 = 103;
+const KEY_DOWN: u16 = 108;
 const KEY_BACK: u16 = 158;
 const KEY_HOMEPAGE: u16 = 172;
 const KEY_PLAYPAUSE: u16 = 164;
@@ -28,9 +30,29 @@ const KEY_SELECT: u16 = 353; // the remote's OK (centre) button
 /// struct input_event on 64-bit Linux: struct timeval (16) + type (2) + code (2) + value (4).
 const EVENT_SIZE: usize = 24;
 
+/// Holding OK this long is a long press (opens an item's options, e.g. Remove).
+pub const LONG_PRESS: Duration = Duration::from_millis(700);
+
+/// Holding Up/Down in a menu scrolls on its own after this long ...
+pub const REPEAT_DELAY: Duration = Duration::from_millis(400);
+/// ... a step every 120 ms, faster the longer it is held (repeat_interval).
+fn repeat_interval(held: Duration) -> Duration {
+    match held.as_millis() {
+        0..=1499 => Duration::from_millis(120),
+        1500..=3499 => Duration::from_millis(60),
+        _ => Duration::from_millis(25),
+    }
+}
+/// A release event lost with a dropped BLE link must not scroll forever.
+const REPEAT_MAX: Duration = Duration::from_secs(60);
+
 pub struct Remote {
     devs: Vec<(PathBuf, File)>,
     scanned: Option<Instant>,
+    ok_down: Option<Instant>, // OK is held since
+    ok_long_sent: bool,       // ... and its long press already fired
+    arrow: Option<(Key, Instant)>, // Up/Down held since (the console sends the first step)
+    next_repeat: Option<Instant>,  // when a held arrow makes its next step
 }
 
 /// Does a /sys/class/input/eventN/device/capabilities/key bitmap include `code`?
@@ -47,7 +69,7 @@ fn has_key(bitmap: &str, code: u16) -> bool {
 
 fn map(code: u16) -> Key {
     match code {
-        KEY_SELECT | KEY_OK | KEY_PLAYPAUSE => Key::Enter,
+        KEY_PLAYPAUSE => Key::Enter, // OK (KEY_SELECT/KEY_OK) is timed in event()
         KEY_BACK => Key::Back,
         KEY_HOMEPAGE => Key::MainMenu,
         KEY_MENU_REMOTE => Key::Menu,
@@ -60,7 +82,7 @@ fn map(code: u16) -> Key {
 
 impl Remote {
     pub fn new() -> Remote {
-        let mut r = Remote { devs: Vec::new(), scanned: None };
+        let mut r = Remote { devs: Vec::new(), scanned: None, ok_down: None, ok_long_sent: false, arrow: None, next_repeat: None };
         r.rescan();
         r
     }
@@ -95,7 +117,99 @@ impl Remote {
         self.devs.iter().map(|(_, f)| f.as_raw_fd()).collect()
     }
 
-    /// Drains pending events from device `fd`; returns the first mapped key press.
+    /// One key event -> a key, with OK's short/long press decided on its timing:
+    /// press = nothing yet; release before LONG_PRESS = Enter; held LONG_PRESS = LongOk (fired
+    /// while still held, from autorepeat or from tick()); the release after a long press = nothing.
+    fn event(&mut self, code: u16, value: i32) -> Key {
+        if code == KEY_SELECT || code == KEY_OK {
+            let now = Instant::now();
+            return match value {
+                1 => {
+                    self.ok_down = Some(now);
+                    self.ok_long_sent = false;
+                    Key::None
+                }
+                2 => self.tick(false),
+                _ => {
+                    let held = self.ok_down.take().map(|t| now.duration_since(t));
+                    match held {
+                        _ if self.ok_long_sent => Key::None,
+                        Some(h) if h >= LONG_PRESS => Key::LongOk,
+                        Some(_) => Key::Enter,
+                        None => Key::None,
+                    }
+                }
+            };
+        }
+        if code == KEY_UP || code == KEY_DOWN {
+            // timed only: the step itself arrives through the console
+            let k = if code == KEY_UP { Key::Up } else { Key::Down };
+            match value {
+                1 => {
+                    let now = Instant::now();
+                    self.arrow = Some((k, now));
+                    self.next_repeat = Some(now + REPEAT_DELAY);
+                }
+                0 => self.release_arrow(),
+                _ => {}
+            }
+            return Key::None;
+        }
+        if value == 1 { map(code) } else { Key::None }
+    }
+
+    fn release_arrow(&mut self) {
+        self.arrow = None;
+        self.next_repeat = None;
+    }
+
+    /// The next step of a held Up/Down (`repeat`: only menus scroll by holding).
+    fn arrow_tick(&mut self, repeat: bool) -> Key {
+        let (Some((k, since)), Some(next), true) = (self.arrow, self.next_repeat, repeat) else { return Key::None };
+        let now = Instant::now();
+        if now.duration_since(since) > REPEAT_MAX {
+            self.release_arrow();
+            return Key::None;
+        }
+        if now < next {
+            return Key::None;
+        }
+        self.next_repeat = Some(now + repeat_interval(now.duration_since(since)));
+        k
+    }
+
+    /// True for a console arrow that only repeats a held remote arrow (kernel autorepeat):
+    /// while held, the steps come from arrow_tick() instead.
+    pub fn console_repeat(&self, k: Key) -> bool {
+        matches!(self.arrow, Some((a, since)) if a == k && since.elapsed() >= Duration::from_millis(150))
+    }
+
+    /// LongOk once OK has been held LONG_PRESS, or the next step of a held arrow when
+    /// `repeat` (call when a wait times out).
+    pub fn tick(&mut self, repeat: bool) -> Key {
+        match self.ok_down {
+            Some(t) if !self.ok_long_sent && t.elapsed() >= LONG_PRESS => {
+                self.ok_long_sent = true;
+                Key::LongOk
+            }
+            _ => self.arrow_tick(repeat),
+        }
+    }
+
+    /// How long until a held OK becomes a long press or a held arrow steps (None: nothing held).
+    pub fn due(&self, repeat: bool) -> Option<Duration> {
+        let ok = match self.ok_down {
+            Some(t) if !self.ok_long_sent => Some(LONG_PRESS.saturating_sub(t.elapsed())),
+            _ => None,
+        };
+        let arrow = self.next_repeat.filter(|_| repeat).map(|t| t.saturating_duration_since(Instant::now()));
+        match (ok, arrow) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// Drains pending events from device `fd`; returns the first key they make.
     pub fn read(&mut self, fd: libc::c_int) -> Key {
         let Some(i) = self.devs.iter().position(|(_, f)| f.as_raw_fd() == fd) else { return Key::None };
         let mut key = Key::None;
@@ -107,8 +221,11 @@ impl Remote {
                         let typ = u16::from_ne_bytes([ev[16], ev[17]]);
                         let code = u16::from_ne_bytes([ev[18], ev[19]]);
                         let value = i32::from_ne_bytes([ev[20], ev[21], ev[22], ev[23]]);
-                        if typ == EV_KEY && value == 1 && key == Key::None {
-                            key = map(code);
+                        if typ == EV_KEY {
+                            let k = self.event(code, value);
+                            if key == Key::None {
+                                key = k;
+                            }
                         }
                     }
                 }
@@ -117,6 +234,7 @@ impl Remote {
                 Err(_) => {
                     // ENODEV: the remote disconnected; its eventN is gone
                     self.devs.remove(i);
+                    self.release_arrow();
                     break;
                 }
             }
@@ -128,6 +246,52 @@ impl Remote {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn remote() -> Remote {
+        Remote { devs: Vec::new(), scanned: None, ok_down: None, ok_long_sent: false, arrow: None, next_repeat: None }
+    }
+
+    #[test]
+    fn held_arrow_repeats() {
+        let mut r = remote();
+        assert_eq!(r.event(KEY_DOWN, 1), Key::None); // the console delivers the first step
+        assert_eq!(r.tick(true), Key::None); // not held long enough yet
+        assert!(!r.console_repeat(Key::Down)); // the console's own first step is kept
+        r.arrow = Some((Key::Down, Instant::now() - REPEAT_DELAY));
+        r.next_repeat = Some(Instant::now());
+        assert!(r.console_repeat(Key::Down)); // kernel autorepeat copies are dropped
+        assert!(!r.console_repeat(Key::Up));
+        assert_eq!(r.tick(false), Key::None); // the player: no scrolling by holding
+        assert_eq!(r.tick(true), Key::Down);
+        assert_eq!(r.tick(true), Key::None); // next step only after the interval
+        assert!(r.due(true).is_some_and(|d| d <= Duration::from_millis(120)));
+        assert_eq!(r.event(KEY_DOWN, 0), Key::None);
+        assert_eq!(r.tick(true), Key::None);
+        assert!(r.due(true).is_none());
+        r.arrow = Some((Key::Up, Instant::now() - REPEAT_MAX - Duration::from_secs(1)));
+        r.next_repeat = Some(Instant::now());
+        assert_eq!(r.tick(true), Key::None); // a lost release stops after REPEAT_MAX
+        assert!(r.arrow.is_none());
+        assert!(repeat_interval(Duration::from_secs(5)) < repeat_interval(Duration::ZERO));
+    }
+
+    #[test]
+    fn ok_short_and_long() {
+        let mut r = remote();
+        assert_eq!(r.event(KEY_SELECT, 1), Key::None); // press: wait for the release
+        assert_eq!(r.event(KEY_SELECT, 0), Key::Enter); // quick release = OK
+        assert_eq!(r.event(KEY_SELECT, 1), Key::None);
+        r.ok_down = Some(Instant::now() - LONG_PRESS); // held long enough
+        assert_eq!(r.event(KEY_SELECT, 2), Key::LongOk); // fires while held (autorepeat)
+        assert_eq!(r.event(KEY_SELECT, 2), Key::None); // only once
+        assert_eq!(r.event(KEY_SELECT, 0), Key::None); // the release adds nothing
+        assert_eq!(r.event(KEY_SELECT, 1), Key::None);
+        r.ok_down = Some(Instant::now() - LONG_PRESS);
+        assert_eq!(r.tick(false), Key::LongOk); // no autorepeat: the timer fires it
+        assert_eq!(r.event(KEY_SELECT, 0), Key::None);
+        assert_eq!(r.event(KEY_BACK, 1), Key::Back);
+        assert_eq!(r.event(KEY_BACK, 0), Key::None);
+    }
 
     #[test]
     fn bitmap() {

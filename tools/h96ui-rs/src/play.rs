@@ -55,6 +55,9 @@ fn mpv_args(s: &Settings, playlist: &str, index: usize, input_conf: &str) -> Vec
     a.push("--network-timeout=20".into());
     a.push(format!("--volume={}", s.volume));
     a.push(format!("--audio-device={}", audio_device(&s.audio)));
+    if s.channels != "source" {
+        a.push("--audio-channels=stereo".into());
+    }
     a.push(format!("--playlist={playlist}"));
     a.push(format!("--playlist-start={index}"));
     if s.deinterlace {
@@ -123,6 +126,11 @@ pub fn play(a: &mut App, sub: &Subscription, index: usize) -> Result<(), String>
 const PLANE: &str = "172";
 const CONNECTOR: &str = "371"; // HDMI-A-1
 const PLAYER_LOG: &str = "/tmp/h96ui-player.log"; // copy of the last player's status lines
+/// GStreamer's own log of the last player run: warnings and errors from every element, plus
+/// ALSA's negotiation (alsa:4: the rates/channels/formats the device offered and refused).
+/// Overwritten at each start; a GST_DEBUG already in the environment wins.
+const GST_LOG: &str = "/tmp/h96player-gst.log";
+const GST_LEVELS: &str = "2,alsa:4";
 
 fn alsa_device(a: &str) -> &'static str {
     match a {
@@ -142,6 +150,7 @@ fn player_args(s: &Settings, ch: &Channel) -> Vec<String> {
         "-p".into(), plane,
         "-c".into(), conn,
         "-a".into(), alsa_device(&s.audio).into(),
+        "-C".into(), if s.channels == "source" { "0" } else { "2" }.into(),
         "-v".into(), format!("{:.2}", s.volume.clamp(0, 100) as f64 / 100.0),
     ];
     if !ch.user_agent.is_empty() {
@@ -187,7 +196,11 @@ impl Player {
     fn spawn(s: &Settings, ch: &Channel) -> Result<Player, String> {
         let mut args = vec!["-i".to_string()];
         args.extend(player_args(s, ch));
-        let mut child = Command::new("h96player")
+        let mut cmd = Command::new("h96player");
+        if std::env::var_os("GST_DEBUG").is_none() {
+            cmd.env("GST_DEBUG", GST_LEVELS).env("GST_DEBUG_FILE", GST_LOG).env("GST_DEBUG_NO_COLOR", "1");
+        }
+        let mut child = cmd
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -388,6 +401,7 @@ enum Next {
 /// After a stream stopped by itself: keep its reason on screen until the user picks another
 /// item (live) or goes back.
 fn after_failure(a: &mut App, name: &str, why: &str, index: usize, n: usize, vod: bool) -> Next {
+    let why = &a.redact(why);
     let help = if vod { "Back: menu" } else { "Up/Down: other channel   Back: menu" };
     write_out(&card(a, name, &format!("Stopped: {why}"), help));
     loop {
@@ -428,7 +442,10 @@ pub fn play_hw(a: &mut App, items: &[Channel], mut index: usize, vod: bool) -> R
         let mut vol_until: Option<Instant> = None; // volume line visible in the OSD until
         let mut last_buf = -1;
         let next = loop {
-            let k = a.read_key(Duration::from_millis(200));
+            let k = match a.read_key(Duration::from_millis(200)) {
+                Key::LongOk => Key::Enter, // a held OK while watching is just OK
+                k => k,
+            };
             let changed = p.poll();
             if p.st.ended && vod {
                 break Next::Menu(format!("Finished: {}", ch.name));

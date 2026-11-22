@@ -20,7 +20,7 @@ echo "  kernel of the builder: $(uname -s -m -r)"
 echo "=== is the mount real, and writable, and THIS project? ==="
 if [ ! -d "$WANT" ]; then
   echo "  !! $WANT does not exist -- this container has no project mount. Start with:"
-  echo "     podman run -it --rm -v \$HOME/Sources/ClaudePlayground/H96Max:$WANT:z fedora:41 bash"
+  echo "     podman run -it --rm -v \"\$PWD\":$WANT:z fedora:41 bash     (on the host, from the project root)"
   echo "     (the :z is not optional: SELinux enforcing turns it into 'not a git repository')"
   exit 1
 fi

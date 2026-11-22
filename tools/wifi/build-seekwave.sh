@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the SeekWave SWT6621S modules (tools/wifi/seekwave, ported from Neardi's SDK)
 # against our vendor 6.1.172 kernel tree. Container only:
-#   podman run --rm -v ~/Sources/ClaudePlayground/H96Max:/work:z fedora:41 bash -c \
+#   podman run --rm -v "$PWD":/work:z fedora:41 bash -c \
 #     'dnf -y -q install gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu gcc make bison flex bc perl openssl-devel elfutils-libelf-devel patch diffutils >/dev/null; ROOT=/work bash /work/tools/wifi/build-seekwave.sh'
 set -uo pipefail
 ROOT=${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}

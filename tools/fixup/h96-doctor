@@ -1,0 +1,144 @@
+#!/bin/sh
+# h96-doctor -- read-only health check of the H96Max box. Changes nothing.
+# Each line: "ok", "WARN" or "FAIL", what was checked, and for problems the command that fixes
+# it (h96-fix ..., see docs/log/troubleshooting.md). Exit status = number of FAILs.
+#   h96-doctor          all checks
+#   h96-doctor -q       problems only
+Q=0; [ "${1:-}" = -q ] && Q=1
+FAILS=0
+ok()   { [ $Q = 1 ] || printf '  ok    %s\n' "$*"; }
+warn() { printf '  WARN  %s\n' "$*"; }
+fail() { printf '  FAIL  %s\n' "$*"; FAILS=$((FAILS + 1)); }
+hdr()  { [ $Q = 1 ] || printf '%s\n' "== $*"; }
+have() { command -v "$1" >/dev/null 2>&1; }
+SHARE=/usr/local/share/h96
+
+hdr "interface (h96ui on tty1)"
+P=$(pidof h96ui)
+if [ -z "$P" ]; then
+	fail "h96ui is not running (init respawns it from /etc/inittab) -> h96-fix ui"
+else
+	ok "h96ui running: $(/usr/local/bin/h96ui -version 2>/dev/null) (pid $P)"
+	case $(/usr/local/bin/h96ui -version 2>/dev/null) in
+		*" 0.1."*) warn "this is the old Go h96ui (mpv player, no Back/OK) -> tools/fixup/push-to-box.sh" ;;
+	esac
+fi
+[ -x /usr/local/bin/h96ui.prev ] && ok "previous h96ui kept for rollback (h96-fix ui-rollback)"
+S=$(stty -F /dev/tty1 size 2>/dev/null)
+FB=$(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null)
+case "$FB" in
+	1920,1080) [ "$S" = "33 120" ] && ok "console 1920x1080, 120x33 cells" ||
+		warn "console is ${S:-?} cells on a 1920x1080 framebuffer (expected 33 120) -> h96-fix display" ;;
+	"") fail "no framebuffer /dev/fb0" ;;
+	*) warn "framebuffer is $FB, not 1920x1080 (TV gave no/odd EDID at boot?) -> h96-fix display" ;;
+esac
+
+hdr "player (h96player, GStreamer, VPU)"
+PL=$(command -v h96player || ls /usr/local/bin/h96player /usr/bin/h96player 2>/dev/null | head -1)
+if [ -z "$PL" ]; then
+	fail "h96player is not installed -> tools/fixup/push-to-box.sh (from the PC)"
+else
+	h96player >/dev/null 2>&1; [ $? = 2 ] && ok "h96player: $PL" || fail "h96player at $PL does not run"
+	[ -x /usr/local/bin/h96player ] && [ -x /usr/bin/h96player ] &&
+		warn "two h96player copies (/usr/local/bin wins in h96ui's PATH); push-to-box.sh removes the stale one"
+fi
+for p in $(pidof h96player mpv gst-launch-1.0); do
+	age=$(ps -o pid,etime | awk -v p="$p" '$1 == p {print $2}')
+	warn "player process $p ($(cat /proc/"$p"/comm), running $age): fine while watching; stuck if the menu is on screen -> h96-fix player"
+done
+if have gst-inspect-1.0; then
+	miss=""
+	for e in playbin3 mppvideodec kmssink hlsdemux2 avdec_aac alsasink souphttpsrc; do
+		gst-inspect-1.0 --exists "$e" 2>/dev/null || miss="$miss $e"
+	done
+	[ -z "$miss" ] && ok "GStreamer elements present (playbin3 mppvideodec kmssink hlsdemux2 avdec_aac ...)" ||
+		fail "GStreamer elements missing:$miss -> apk add \$(cat box-packages.txt); push-to-box.sh"
+else
+	warn "gst-inspect-1.0 not installed (apk add gstreamer-tools): GStreamer checks skipped"
+fi
+K=/usr/lib/gstreamer-1.0/libgstkms.so
+if [ -f "$SHARE/libgstkms.so" ]; then
+	if cmp -s "$K" "$SHARE/libgstkms.so"; then
+		ok "kmssink is our patched build (anamorphic SD channels work)"
+	else
+		fail "kmssink is not our patched build (apk upgrade of gst-plugins-bad?): SD channels fail with 'No space left on device' -> h96-fix kmssink"
+	fi
+else
+	warn "no reference copy $SHARE/libgstkms.so: cannot tell if kmssink is patched -> push-to-box.sh"
+fi
+[ -c /dev/mpp_service ] && ok "/dev/mpp_service (VPU kernel service)" || fail "/dev/mpp_service missing: kernel without Rockchip MPP?"
+if ls /usr/lib/librockchip_mpp.so* >/dev/null 2>&1; then
+	if have mpp_info_test && mpp_info_test 2>&1 | grep -q "can not found match soc name"; then
+		fail "librockchip_mpp does not know the RK3518 (unpatched build) -> push-to-box.sh"
+	else
+		ok "librockchip_mpp installed"
+	fi
+else
+	fail "librockchip_mpp missing -> push-to-box.sh"
+fi
+if [ -r /sys/kernel/debug/dri/0/summary ] || mount -t debugfs none /sys/kernel/debug 2>/dev/null; then
+	if sed -n '/Esmart1-win0/,/win_id/p' /sys/kernel/debug/dri/0/summary 2>/dev/null | grep -q ACTIVE; then
+		[ -n "$(pidof h96player gst-launch-1.0)" ] && ok "video plane (Esmart1-win0) in use by the player" ||
+			fail "video plane (Esmart1-win0) shows a picture but no player runs: frozen frame over the menu -> h96-fix player"
+	else
+		ok "video plane free"
+	fi
+fi
+
+hdr "network, Bluetooth, remote"
+if [ -e /sys/class/net/wlan0 ]; then
+	ip4=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}')
+	[ -n "$ip4" ] && ok "wlan0 $ip4 ($(iw dev wlan0 link 2>/dev/null | sed -n 's/.*signal: //p'))" ||
+		warn "wlan0 has no address (PSK in /etc/wpa_supplicant/wpa_supplicant.conf? out of range?)"
+else
+	fail "no wlan0: WiFi chip down -> h96-fix wifi-bt (or a cold power cycle)"
+fi
+# the driver's rx reorder buffer stalls long-distance TCP (0.3 vs 6.6 Mbit/s, NOTES §40);
+# h96-wifi turns it off at boot
+grep -q " /sys/kernel/debug " /proc/mounts || mount -t debugfs none /sys/kernel/debug 2>/dev/null
+for f in /sys/kernel/debug/skwifi/*/rx_reorder; do
+	[ -e "$f" ] || continue
+	[ "$(cat "$f")" = disable ] && ok "WiFi rx reorder buffer off (fast long-distance downloads)" ||
+		fail "WiFi rx reorder buffer is ON: distant IPTV servers crawl (~0.3 Mbit/s) -> h96-fix wifi-reorder"
+done
+[ -e /sys/class/bluetooth/hci0 ] && ok "Bluetooth hci0" || fail "no hci0: Bluetooth down -> h96-fix wifi-bt"
+R=""
+for e in /sys/class/input/event*; do
+	grep -q "Bluetooth remote Consumer Control" "$e/device/name" 2>/dev/null && R=$(basename "$e")
+done
+[ -n "$R" ] && ok "remote connected ($R)" ||
+	warn "remote not connected: press a key on it (it reconnects); re-pair: docs/log/status-and-resume.md"
+if [ -n "$P" ] && [ -n "$R" ]; then
+	ls -l /proc/"$P"/fd 2>/dev/null | grep -q "/dev/input/$R" && ok "h96ui reads the remote's Back/OK/Home ($R)" ||
+		warn "h96ui does not have $R open yet (it rescans every 3 s; press a key)"
+fi
+
+hdr "system"
+Y=$(date +%Y)
+[ "$Y" -ge 2026 ] && ok "clock $(date '+%Y-%m-%d %H:%M')" ||
+	fail "clock says $Y (no RTC; chronyd not synced): OpenRC skips files with future mtimes -> rc-service chronyd restart"
+grep -q ' /mnt/h96usb ' /proc/mounts && warn "a USB stick is still mounted at /mnt/h96usb (fine while importing) -> h96-fix usb"
+df -m / | awk -v q="$Q" 'NR == 2 { if ($4 < 300) printf "  FAIL  root filesystem: only %d MiB free\n", $4; else if (q != 1) printf "  ok    root filesystem: %d MiB free\n", $4 }'
+awk '/MemAvailable/ { if ($2 < 200000) printf "  WARN  only %d MiB memory available\n", $2 / 1024 }' /proc/meminfo
+T=$(cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null)
+[ -n "$T" ] && { [ "$T" -lt 85000 ] && ok "CPU $((T / 1000)) C" || warn "CPU $((T / 1000)) C: hot"; }
+for x in /var/lib/h96ui/subs/*.xtream; do
+	[ -e "$x" ] || continue
+	m=$(stat -c %a "$x")
+	[ "$m" = 600 ] && ok "Xtream account $(basename "$x") is private (600)" ||
+		fail "Xtream account $(basename "$x") is mode $m: password readable -> chmod 600 '$x'"
+done
+[ -f /var/lib/skwbt/skwbdaddr ] || warn "no /var/lib/skwbt/skwbdaddr: a new BT address will be generated (re-pair the remote)"
+[ -f /etc/wpa_supplicant/wpa_supplicant.conf ] || warn "no WiFi credentials (/etc/wpa_supplicant/wpa_supplicant.conf)"
+# access: key-only ssh and no root password anywhere (rules-and-lessons.md §10, 2026-11-22)
+case $(grep '^root:' /etc/shadow | cut -d: -f2) in
+	'') fail "root has an EMPTY password (console login without the key) -> sed -i 's/^root:[^:]*:/root:*:/' /etc/shadow" ;;
+	'!'*) fail "root's password starts with ! : OpenSSH treats root as locked and refuses the key -> sed -i 's/^root:[^:]*:/root:*:/' /etc/shadow" ;;
+	'*') ok "root has no usable password (key-only)" ;;
+	*) warn "root has a password: console login with it is possible" ;;
+esac
+sshd -T 2>/dev/null | grep -qx 'passwordauthentication no' && sshd -T 2>/dev/null | grep -qx 'authenticationmethods publickey' &&
+	ok "sshd: key only" || fail "sshd allows more than keys -> check /etc/ssh/sshd_config.d/h96.conf"
+
+[ $Q = 1 ] || echo "== $FAILS problem(s)"
+exit $FAILS

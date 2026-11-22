@@ -159,7 +159,6 @@ between — ASMedia hubs and front-panel headers are a known nuisance for Maskro
 
 ## Phase 3 — read everything
 
-    cd ~/Sources/ClaudePlayground/H96Max
     tools/build-loaders.sh        # once; fetches+hash-checks rkbin, packs 4 loaders
     tools/dump-emmc.sh            # probe units -> double-read verify -> full image
 

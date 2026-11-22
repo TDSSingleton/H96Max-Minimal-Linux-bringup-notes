@@ -3,7 +3,7 @@
 Split from the single `NOTES.md` (2026-11-21) so each file holds at most two subjects.
 Text is unchanged except where marked; `§N` numbers are the original ones.
 
-Current state (2026-11-21 evening): hardware layer done -- our u-boot + arm64 kernel + Alpine on the box, WiFi, Bluetooth remote, console UI. Next: hardware video (§33).
+Current state (2026-11-22): a working IPTV stick -- VPU video via h96player, Rust h96ui with M3U + Xtream, fixup kit (§34-§39). Broken? docs/log/troubleshooting.md.
 
 | § | Title | File |
 |---|---|---|
@@ -44,5 +44,10 @@ Current state (2026-11-21 evening): hardware layer done -- our u-boot + arm64 ke
 | 35 | Real channels: kmssink anamorphic-SD fix, server-throughput stalls, playlist HTTP headers | [12-interface-and-video.md](12-interface-and-video.md) |
 | 36 | h96player: playlist HTTP headers (UA/Referer reach every HLS segment) and a prebuffer with hysteresis | [12-interface-and-video.md](12-interface-and-video.md) |
 | 37 | Videos vs live, OK button via evdev, h96player control + box OSD, playbin seek deadlock -> playbin3 | [12-interface-and-video.md](12-interface-and-video.md) |
+| 38 | Xtream Codes accounts: USB/ssh import, categories, series/seasons, User-Agent, mock panel for tests | [12-interface-and-video.md](12-interface-and-video.md) |
+| 39 | Fixup kit (h96-doctor, h96-fix, push-to-box.sh) and the rootfs image with the video stack | [12-interface-and-video.md](12-interface-and-video.md) |
+| 40 | "Streaming gone": the SeekWave driver's rx reorder buffer stalls long-RTT TCP (0.3 vs 6.6 Mbit/s); off at boot | [12-interface-and-video.md](12-interface-and-video.md) |
+| 41 | EBI 0.6: WiFi from a USB file, autoscroll (no EV_REP on the remote), letter jump and A-Z order with shared-lead stripping | [12-interface-and-video.md](12-interface-and-video.md) |
+| 42 | "Could not get/set settings": 5.1 audio vs the TV's HDMI speaker allocation; h96player -C downmix and error detail lines | [12-interface-and-video.md](12-interface-and-video.md) |
 
 Related: `../vendor-kernel-6.1.118.config` (factory kernel `.config`, §20).

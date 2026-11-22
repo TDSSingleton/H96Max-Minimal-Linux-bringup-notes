@@ -25,7 +25,7 @@ ADB=${ADB:-adb}
 mkdir -p "$OUT/meta" "$OUT/partitions"
 log() { echo "[$(date +%H:%M:%S)] $*"; }
 
-sh -c 'command -v adb' >/dev/null || { echo "no adb on PATH"; exit 1; }
+command -v "$ADB" >/dev/null || { echo "no $ADB on PATH (set ADB=/path/to/adb)"; exit 1; }
 
 echo "===== 0. what is attached ====="
 "$ADB" devices -l 2>&1 | tee "$OUT/meta/adb-devices.txt"
@@ -58,19 +58,33 @@ if "$ADB" exec-out "cat /sys/firmware/fdt" > "$OUT/devicetree.dtb" 2>"$OUT/meta/
   grep -oE '(brcmf|ap62|aic[0-9a-z]*|swt6621|seekwave|syna[a-z0-9]*|realtek,rtl[a-z0-9]*|stmmac|dwmac|ethernet-phy|remotectl|ir-receiver|pwm-ir|wireless-bluetooth|bluetooth-platdata|hdmi-sound|rockchip,hdmi|vop|hdmi@)' \
     "$OUT/devicetree.dts" 2>/dev/null | sort | uniq -c | sort -rn | head -20
 else
-  log "no /sys/firmware/fdt -- trying /proc/device-tree walk"
-  "$ADB" exec-out "cat /proc/devicetree 2>/dev/null" > "$OUT/devicetree.dtb" 2>/dev/null || true
+  # /proc/device-tree is a directory (one file per property), not a blob: take it as a tar
+  log "no /sys/firmware/fdt -- taking /proc/device-tree as a tar instead"
+  rm -f "$OUT/devicetree.dtb"
+  if "$ADB" exec-out "cd /proc/device-tree && tar cf - . 2>/dev/null" > "$OUT/proc-device-tree.tar" \
+     && [ -s "$OUT/proc-device-tree.tar" ]; then
+    log "got $OUT/proc-device-tree.tar ($(stat -c%s "$OUT/proc-device-tree.tar") bytes; dtc -I fs on the unpacked tree)"
+  else
+    rm -f "$OUT/proc-device-tree.tar"; log "no device tree from recovery"
+  fi
 fi
 
 echo
 echo "===== 2. identity + health of the storage ====="
-for c in "getprop" "ls -lZ /dev/block/by-name/" "df -h" "mount"
-         "cat /sys/block/mmcblk2/device/life_time /sys/block/mmcblk2/device/pre_eol_info 2>/dev/null"
-         "cat /sys/block/mmcblk*/device/name /sys/block/mmcblk*/device/csd 2>/dev/null"
-         "ls -l /sys/bus/sdio/devices/ 2>/dev/null; cat /sys/bus/sdio/devices/*/vendor /sys/bus/sdio/devices/*/device 2>/dev/null"
-         "lsusb 2>/dev/null; cat /sys/kernel/debug/usb/devices 2>/dev/null | head -80"
-         "uname -a; cat /proc/cmdline; getenforce"; do
-  f=$(echo "$c" | tr -c 'a-z0-9' '_' )
+# one array entry per command (the list used to run over several lines without "\", which
+# ended the for loop at its first line: a syntax error, so the script never ran)
+probes=(
+  "getprop"
+  "ls -lZ /dev/block/by-name/"
+  "df -h"
+  "mount"
+  "cat /sys/block/mmcblk2/device/life_time /sys/block/mmcblk2/device/pre_eol_info 2>/dev/null"
+  "cat /sys/block/mmcblk*/device/name /sys/block/mmcblk*/device/csd 2>/dev/null"
+  "ls -l /sys/bus/sdio/devices/ 2>/dev/null; cat /sys/bus/sdio/devices/*/vendor /sys/bus/sdio/devices/*/device 2>/dev/null"
+  "lsusb 2>/dev/null; cat /sys/kernel/debug/usb/devices 2>/dev/null | head -80"
+  "uname -a; cat /proc/cmdline; getenforce"
+)
+for c in "${probes[@]}"; do
   echo "### $c" | tee -a "$OUT/meta/probe-all.txt"
   "$ADB" shell "$c" 2>&1 | tee -a "$OUT/meta/probe-all.txt" | head -25
   echo
@@ -107,7 +121,7 @@ done
 
 echo
 echo "===== 5. fingerprints ====="
-( cd "$OUT" && find . -type f \( -name '*.img' -o -name '*.dtb' \) -exec sha256sum {} + | sort -k2 > SHA256SUMS.txt ) \
+( cd "$OUT" && find . -type f \( -name '*.img' -o -name '*.dtb' -o -name '*.tar' \) -exec sha256sum {} + | sort -k2 > SHA256SUMS.txt ) \
   && cat "$OUT/SHA256SUMS.txt"
 du -sh "$OUT"
 

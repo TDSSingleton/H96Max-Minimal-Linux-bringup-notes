@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build h96ui for the box: static arm64 binary, standard library only. Container:
-#   podman run --rm -v ~/Sources/ClaudePlayground/H96Max:/work:z fedora:41 bash -c \
+#   podman run --rm -v "$PWD":/work:z fedora:41 bash -c \
 #     'dnf -y -q install golang >/dev/null; bash /work/tools/h96ui/build.sh'
 set -euo pipefail
 cd "$(dirname "$0")"

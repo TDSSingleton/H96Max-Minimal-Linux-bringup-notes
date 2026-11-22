@@ -1,0 +1,127 @@
+#!/bin/sh
+# h96-fix PROBLEM -- repairs for the known failure modes of the H96Max box (run h96-doctor to
+# find out which one you have; docs/log/troubleshooting.md explains each).
+#   player       a stuck or leftover player (frozen picture over the menu, remote ignored):
+#                stop h96player/mpv/gst-launch (TERM, then KILL), then restart h96ui
+#   display      squashed/odd console, no picture: HDMI re-detect, TV-out off, console to the
+#                HDMI mode (1080p normally), 16x32 font, restart h96ui
+#   ui           restart h96ui (init respawns it on tty1)
+#   ui-rollback  swap /usr/local/bin/h96ui with the previous build (h96ui.prev), restart
+#   kmssink      re-install our patched kmssink (after an apk upgrade of gst-plugins-bad);
+#                "kmssink alpine" puts Alpine's original back
+#   usb          unmount a USB stick left mounted at /mnt/h96usb (lazy, works if it was pulled)
+#   wifi-reorder turn off the WiFi driver's rx reorder buffer (it stalls TCP from distant
+#                servers: streams freeze / never start; NOTES §40). h96-wifi does this at boot.
+#   wifi-bt      reset the SeekWave WiFi/BT chip without a power cycle (NOTES §32): unload
+#                the drivers, unbind/bind the SDIO controller (pulses the chip reset), reload,
+#                restart WiFi + Bluetooth. Drops WiFi for ~30 s: it detaches itself, so it
+#                survives the ssh session dying; log in /var/log/h96/fix-wifi-bt.log
+set -u
+SHARE=/usr/local/share/h96
+LOG=/var/log/h96
+say() { printf 'h96-fix: %s\n' "$*"; }
+
+restart_ui() {
+	P=$(pidof h96ui)
+	[ -n "$P" ] && kill $P
+	printf '\033[0m\033[2J\033[H' > /dev/tty1 2>/dev/null
+	i=0; while [ $i -lt 20 ]; do
+		N=$(pidof h96ui)
+		[ -n "$N" ] && [ "$N" != "$P" ] && { say "h96ui restarted (pid $N)"; return 0; }
+		sleep 0.25; i=$((i + 1))
+	done
+	say "h96ui did not come back: check /etc/inittab (tty1::respawn:/usr/local/bin/h96ui)"
+	return 1
+}
+
+stop_players() {
+	L=$(pidof h96player mpv gst-launch-1.0)
+	[ -z "$L" ] && { say "no player running"; return 0; }
+	kill $L 2>/dev/null
+	i=0; while [ $i -lt 12 ] && [ -n "$(pidof h96player mpv gst-launch-1.0)" ]; do sleep 0.25; i=$((i + 1)); done
+	L=$(pidof h96player mpv gst-launch-1.0)
+	[ -n "$L" ] && { say "still running after SIGTERM, killing: $L"; kill -9 $L; sleep 0.5; }
+	say "players stopped (the kernel frees the video plane when they exit)"
+}
+
+case "${1:-}" in
+player)
+	stop_players
+	restart_ui ;;
+display)
+	stop_players
+	H=/sys/class/drm/card0-HDMI-A-1/status
+	[ -e $H ] && echo detect > $H
+	[ -e /sys/class/drm/card0-TV-1/status ] && echo off > /sys/class/drm/card0-TV-1/status
+	sleep 1
+	M=$(head -1 /sys/class/drm/card0-HDMI-A-1/modes 2>/dev/null)
+	W=${M%x*}; Hh=${M#*x}; Hh=${Hh%%[!0-9]*}
+	[ -n "$W" ] && [ -n "$Hh" ] || { W=1920; Hh=1080; }
+	fbset -fb /dev/fb0 -g "$W" "$Hh" "$W" "$Hh" 32 2>/dev/null
+	f=/usr/share/consolefonts/ter-v32n.psf.gz
+	[ -e $f ] && setfont -C /dev/tty1 $f
+	say "HDMI ${M:-unknown mode} (TV reports), console $(cat /sys/class/graphics/fb0/virtual_size) = $(stty -F /dev/tty1 size) cells"
+	[ "$M" = 1920x1080 ] || say "the TV did not offer 1080p first: turn the TV on before the box, then reboot"
+	restart_ui ;;
+ui)
+	restart_ui ;;
+ui-rollback)
+	B=/usr/local/bin
+	[ -x $B/h96ui.prev ] || { say "no $B/h96ui.prev to roll back to"; exit 1; }
+	mv $B/h96ui $B/h96ui.tmp && mv $B/h96ui.prev $B/h96ui && mv $B/h96ui.tmp $B/h96ui.prev
+	say "now $($B/h96ui -version) (the other build is h96ui.prev; run again to swap back)"
+	restart_ui ;;
+kmssink)
+	K=/usr/lib/gstreamer-1.0/libgstkms.so
+	if [ "${2:-}" = alpine ]; then
+		[ -f $SHARE/libgstkms.so.alpine ] || { say "no saved Alpine original ($SHARE/libgstkms.so.alpine)"; exit 1; }
+		install -m 755 $SHARE/libgstkms.so.alpine $K
+		say "Alpine's kmssink restored (anamorphic SD channels will fail again)"
+	else
+		[ -f $SHARE/libgstkms.so ] || { say "no patched copy in $SHARE: run tools/fixup/push-to-box.sh from the PC"; exit 1; }
+		if ! cmp -s $K $SHARE/libgstkms.so; then
+			cp -a $K $SHARE/libgstkms.so.alpine   # whatever apk installed: keep it for "alpine"
+			install -m 755 $SHARE/libgstkms.so $K
+		fi
+		v=$(apk list -I gst-plugins-bad 2>/dev/null | sed -n 's/^gst-plugins-bad-\([0-9.]*\)-r.*/\1/p')
+		b=$(cat $SHARE/libgstkms.version 2>/dev/null)
+		[ -n "$b" ] && [ "$v" != "$b" ] &&
+			say "WARNING: patched kmssink was built for gst-plugins-bad $b, Alpine now has $v: rebuild (STAGES=kms tools/video/build-mpp.sh)"
+		say "patched kmssink installed"
+	fi
+	rm -rf /root/.cache/gstreamer-1.0 ;;
+wifi-reorder)
+	grep -q " /sys/kernel/debug " /proc/mounts || mount -t debugfs none /sys/kernel/debug
+	n=0
+	for f in /sys/kernel/debug/skwifi/*/rx_reorder; do
+		[ -e "$f" ] || continue
+		echo disable > "$f"; say "$f: $(cat "$f")"; n=$((n + 1))
+	done
+	[ $n -gt 0 ] || say "no skwifi debugfs entry: is the WiFi driver loaded?"
+	grep -q rx_reorder /etc/init.d/h96-wifi || say "WARNING: /etc/init.d/h96-wifi does not do this at boot: install the current one (push-to-box.sh / payload)" ;;
+usb)
+	umount -l /mnt/h96usb 2>/dev/null && say "USB stick unmounted" || say "nothing mounted at /mnt/h96usb" ;;
+wifi-bt)
+	if [ "${H96FIX_DETACHED:-}" != 1 ]; then
+		mkdir -p $LOG
+		H96FIX_DETACHED=1 setsid "$0" wifi-bt > $LOG/fix-wifi-bt.log 2>&1 < /dev/null &
+		say "running detached (WiFi drops for ~30 s); log: $LOG/fix-wifi-bt.log"
+		exit 0
+	fi
+	date
+	rc-service bluetooth stop; rc-service h96-bt stop; rc-service h96-wifi stop
+	# never unload one module alone: the chip goes into a recovery that fails (NOTES §26/§32)
+	rmmod skwbt 2>/dev/null; rmmod skw6316 2>/dev/null; rmmod skw_sdio_v20 2>/dev/null
+	D=/sys/bus/platform/drivers/dwmmc_rockchip
+	echo ffc20000.mmc > $D/unbind; sleep 1; echo ffc20000.mmc > $D/bind
+	sleep 3   # the card re-enumerates (1ffe:6621, SDR104)
+	dmesg | tail -5
+	rc-service h96-wifi start && rc-service h96-bt start && rc-service bluetooth start
+	sleep 5
+	ip -4 -o addr show wlan0
+	[ -e /sys/class/bluetooth/hci0 ] && echo "hci0 up" || echo "no hci0: power-cycle the box (unplug the USB-C supply)"
+	date ;;
+*)
+	sed -n '2,/^[^#]/p' "$0" | sed '$d; s/^# \{0,1\}//'   # the header comment
+	exit 2 ;;
+esac

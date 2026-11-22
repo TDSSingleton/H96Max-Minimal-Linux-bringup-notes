@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build h96ui (Rust) for the box: static aarch64-unknown-linux-musl binary, only the libc crate.
 # Container (the rustup toolchain and cargo cache persist under build/rust/):
-#   podman run --rm -v ~/Sources/ClaudePlayground/H96Max:/work:z fedora:41 \
+#   podman run --rm -v "$PWD":/work:z fedora:41 \
 #     bash /work/tools/h96ui-rs/build.sh
 set -euo pipefail
 cd "$(dirname "$0")"

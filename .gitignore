@@ -78,3 +78,6 @@ tools/rootfs/payload/lib/firmware/sv6160lite.nvbin
 # Ripped from the stick's own Android vendor partitions (firmware, reference .ko);
 # make-inbox.sh needs vendor/seekwave/firmware/SWT6621S_*.bin to be present locally.
 vendor/seekwave/
+
+# cargo test/run on the PC (box builds go to build/rust/target via build.sh)
+tools/h96ui-rs/target/

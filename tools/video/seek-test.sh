@@ -1,9 +1,9 @@
 #!/bin/sh
 # seek-test.sh URL [label] -- drive h96player -i with seeks and report whether its main loop
-# survives (NOTES §37). Env passes through (H96PLAYER_VSINK, GST_PLUGIN_FEATURE_RANK, ...).
+# survives (NOTES §37). Extra h96player options in $SEEK_ARGS. Env passes through (H96PLAYER_VSINK, GST_PLUGIN_FEATURE_RANK, ...).
 U=$1; L=${2:-test}; F=/tmp/seek-$$.ctl; LOG=/tmp/seek-$$.log
 rm -f $F; mkfifo $F
-H96PLAYER_TRACE=1 h96player -i "$U" < $F > $LOG 2>&1 &
+H96PLAYER_TRACE=1 h96player -i $SEEK_ARGS "$U" < $F > $LOG 2>&1 &   # SEEK_ARGS: e.g. -u UA
 P=$!; exec 3>$F
 for i in $(seq 1 60); do grep -q "h96player: playing" $LOG && break; sleep 0.5; done
 sleep 2; res=ok

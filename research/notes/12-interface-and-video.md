@@ -166,7 +166,8 @@ map: `build/wifi/remote-keys2.txt`. First tests with an iptv-org country list:
   (no deinterlacer yet; IEP2 exists).
 - **1080p "hangs" = data starvation, not decode/display.** Headless (fakesink) 40 s runs: 2M Monde
   +1 rendered ~11.5 s of video, Al Maghribia (8.8 Mbit/s 1080i) ~3 s; 0 dropped frames.
-  Box WiFi measured ~200 Mbit/s from the LAN (64 MiB over HTTP); the host's internet ~90 Mbit/s;
+  Box WiFi measured ~200 Mbit/s from the LAN (64 MiB over HTTP) -- **correction (§40): a LAN copy
+  (1 ms RTT) cannot reveal the driver's reorder stall that cripples distant servers**; the host's internet ~90 Mbit/s;
   but server 185.9.2.18 gives ~12 Mbit/s per connection to any client -> no margin for an
   8.8 Mbit/s stream with sequential segment fetches from the live edge. Needs a prebuffer
   (playbin shows `use-buffering = false` for HLS: h96ui's "Network cache" setting has no effect
@@ -235,3 +236,147 @@ runs **`h96player`** (`tools/video/h96player.c`, ~250 lines of C on the GStreame
   `volume <0..1>` / `mute <0|1>` (playbin3 software volume); +/-5 % steps, shown as a line in the
   OSD box for 4 s. Level kept across channel switches in memory only (Settings > Start volume
   stays the per-session default); mute survives a channel switch.
+
+## 38. Xtream Codes accounts (2026-11-22)
+
+h96ui 0.5.0 speaks the Xtream API natively (`tools/h96ui-rs/src/xtream.rs`, own JSON reader
+`json.rs`, downloads via busybox wget). The API, stream URL forms and the accepted account
+file formats are documented at the top of `xtream.rs`.
+- **Getting an account in (no typing):** a `.txt`/`.url`/`.xtream` file on the USB stick with the
+  provider's `get.php` / `player_api.php` link, or `server:` / `username:` / `password:` lines
+  (optional `user_agent:`). Account files win over "list of playlist URLs" (a get.php link would
+  otherwise be downloaded as one huge flat M3U). Import logs in first, refuses duplicates
+  (same server + user), stores `subs/<host port>.xtream` mode 0600. Over ssh:
+  `h96ui -xtream-check FILE` (login + categories, prints no password) and `h96ui -xtream-add FILE`.
+- **Menus:** Live TV / Movies / Series -> categories ("All ..." first, fetched per category) ->
+  channels / films / series -> seasons -> episodes (sorted; one season = straight to episodes);
+  Account (status, expiry, connections, live format, User-Agent). Live URLs use .m3u8 when the
+  panel allows HLS (`allowed_output_formats`), else its first format (ts).
+- **User-Agent:** default `VLC/3.0.21 LibVLC/3.0.21` (many panels refuse unknown players), used
+  for the API and passed to h96player for every stream. Passwords are registered as secrets:
+  `App::say` and the player's failure card replace them with `***`.
+- **Tested** against `tools/h96ui-rs/testdata/mock-xtream.py` (account demo/demo123; 403 unless the
+  User-Agent starts with "VLC"; live = HLS redirects, films/episodes = Blender's progressive
+  MP4s with range requests): link and line formats log in, a wrong password says "login
+  refused", every API and stream request carried the UA; live channel 870 frames / 0 dropped;
+  `seek-test.sh` (8 seeks) passes on a progressive MP4 film. Not yet tried on a real panel.
+
+## 39. Fixup kit and the reproducible image (2026-11-22)
+
+- `tools/fixup/h96-doctor` (box, read-only; exit status = number of FAILs): h96ui running and
+  which build, console cells vs. framebuffer (expected 120x33 on 1920x1080), h96player present,
+  leftover player processes, GStreamer elements (playbin3 mppvideodec kmssink hlsdemux2 avdec_aac
+  alsasink souphttpsrc), kmssink = our patched build (compared with
+  `/usr/local/share/h96/libgstkms.so`), `/dev/mpp_service`, librockchip_mpp knows the RK3518
+  (`mpp_info_test`), video plane Esmart1-win0 active without a player (= frozen frame), wlan0 +
+  address, hci0, the remote's input device and whether h96ui has it open, clock (no RTC), USB
+  stick left mounted, free space, memory, temperature, Xtream account files mode 600, BT address
+  and WiFi credentials present.
+- `tools/fixup/h96-fix` (box): `player`, `display`, `ui`, `ui-rollback`, `kmssink [alpine]`,
+  `usb`, `wifi-bt` (NOTES §32 chip reset, detached via setsid because it drops WiFi).
+- `tools/fixup/push-to-box.sh` (PC): installs build/h96ui/h96ui (keeps h96ui.prev),
+  build/video/video-stage.tar.gz (without /opt/rkffmpeg), the fixup kit and missing packages from
+  `tools/fixup/box-packages.txt`; stores the kmssink reference copy, Alpine's original and the
+  version it was built for; restarts h96ui; runs `h96-doctor -q`.
+- `tools/build-rootfs.sh` now installs `box-packages.txt` and the video stage (saving Alpine's
+  kmssink first, refusing to build when Alpine's gst-plugins-bad differs from `GPB_VER`, and
+  running h96player once inside the image); `tools/make-inbox.sh` takes h96ui from the Rust build
+  and adds the fixup kit. Image `h96root.img` `3749043b…`: 330 packages, 533 MB content; root's
+  shadow entry is empty (passwordless local login on tty2).
+- Verified: the scripts pass `sh -n`; doctor and the hardware-free fix paths run correctly under
+  busybox in an arm64 Alpine container. **Not yet run on the box** (offline at the time).
+- Symptom-to-fix table: `docs/log/troubleshooting.md`.
+
+## 40. "Streaming is gone": the WiFi driver's rx reorder buffer (2026-11-22)
+
+**Symptom (user):** after a reboot no live channel played any more, the public 2M (576p) included;
+h96player stayed in PAUSED (no buffering message, no error, 0 frames). The Mux test stream and
+Medi1TV still played.
+**Ruled out, in order:** h96player/playbin3 (the old playbin failed the same way), the decoder
+(2M is now MPEG-2 + MP2; `mpi_dec_test -t 2` 505 fps; a downloaded segment plays from a file),
+the box clock (NTP-synced to the µs), the HLS playlist (normal sequence, 4 x 5.4 s window),
+packet loss (0 % ping loss at 74 ms RTT, 6 TCP retransmits total), WiFi signal (-59 dBm, HE-MCS 11).
+**Cause:** downloads from distant servers ran at a steady **0.30 Mbit/s** on the box vs ~11.5
+Mbit/s on the PC (same segment, same minute): a window/stall limit, not loss. TCP counters showed
+the received segments landing in the out-of-order queue. A/B with the driver's runtime switch
+`/sys/kernel/debug/skwifi/chip1.sdio/rx_reorder` (Neardi skw6316 A-MPDU reorder buffer,
+`skw_rx.c` `skw_ampdu_reorder`, enabled at load): **disable -> 6.59 Mbit/s, enable -> 0.30**.
+With it off, 2M, Al Maghribia and Chada TV play again (0 dropped).
+**Fix:** `h96-wifi` turns it off right after the driver loads (payload + box; the old script is
+`/root/h96-wifi.before-reorder-fix`); `h96-doctor` FAILs if it is on; `h96-fix wifi-reorder`.
+**Why the earlier tests missed it:** the LAN test (§35: ~200 Mbit/s) runs at 1 ms RTT, where a
+reorder stall costs nothing; on a 74 ms path each stall makes the sender back off. The earlier
+11.5 Mbit/s from the same server (before the reboot) suggests the stall depends on the AP's
+aggregation for the session. **Open:** fix the reorder logic itself (likely our rx descriptor
+port: sequence-number / BA-window fields, §27) and re-enable it; until then the stack sees
+occasional reordering, which TCP absorbs.
+
+## 41. EBI 0.6: WiFi from USB, letter jump, autoscroll, A-Z lists (2026-11-22)
+
+The frontend is called **EBI (Extremely Basic IPTV)** from 0.6 on (user decision). Only the
+on-screen text changed: title, footer, About, `-version`. The binary `h96ui`, `/var/lib/h96ui`,
+`H96UI_*` variables and the `h96ui/<ver>` User-Agent keep the old name so that inittab, the
+rootfs build and the fixup kit keep working.
+
+- **Add WiFi from USB** (`wifi.rs`). The rootfs image deliberately has no WiFi PSK, so a
+  reflashed box could only get WiFi through ssh. Now: a `.txt`/`.wifi` file on the stick (top
+  folder, `wifi/` or `iptv/`) with `ssid=` and `password=` lines (also `wifi`/`network`/`name`,
+  `pass`/`psk`/`key`; `=` or `:`; several networks per file; no password line = open; a file
+  named `wifi*` may be just two plain lines). Checked against wpa_supplicant's limits (passphrase
+  8..63, or 64 hex digits = raw PSK; SSID 1..32 bytes). OK on a network: the conf is parsed into
+  header + `network={}` blocks, a block with the same SSID is replaced, the new one gets
+  `priority` = highest + 1 (counted *before* the old block is dropped, so a re-add stays on
+  top), the rest of the file is kept, the old file goes to `wpa_supplicant.conf.bak`, the new
+  one is written 0600 and renamed into place, then `rc-service h96-wifi restart` (its stop keeps
+  the driver loaded: the safe reset, §28) and a 30 s wait for SSID + IPv4 (Back stops waiting).
+  Passwords go into the redaction list, never on screen. Such files are neither URL lists nor
+  Xtream accounts, so the subscription import ignores them (and the reverse: tests cover it).
+  An on-screen keyboard with a network scan was started and dropped at the user's request:
+  the USB file is enough.
+- **Autoscroll.** The remote's Consumer Control input (event4) has no EV_REP: a held arrow
+  produced exactly one step. `remote.rs` now times KEY_UP/KEY_DOWN press/release from evdev
+  (the step itself still arrives through the console): after 400 ms a step every 120 ms, every
+  60 ms after 1.5 s, every 25 ms after 3.5 s; menus only (`App::menu_repeat`; in the player
+  Up/Down zap or seek). Console arrows that only repeat a held remote arrow (a device with
+  kernel autorepeat) are dropped while the evdev timer drives. A lost release (BLE drop) stops
+  after 60 s; a vanished device clears the state.
+- **Letter jump and A-Z order** (`names.rs`, one module so the two can never disagree). Per
+  list: (1) find a **lead** on each name: encased at any length (`[Italy] `, `|ITALIA| `,
+  `(Serie TV) `, also `{} <> «»`), one word of up to 12 letters/digits before `:`/`|`/` - `
+  (`ITALY: `), up to 4 before any symbol (`FR- `, `4K/`), or two capitals before a space
+  (`FR `, `UK `); plain words are names (`BBC One`, `France 2`, `Le Mans`, `Italy-Rai`). (2) A
+  lead is stripped only if at least 2 names and 60 % of the list share it, twice over
+  (`[IT] [Serie] Gomorra` -> `Gomorra`), so a mixed-language list keeps its country codes as the
+  useful letter, and a UK list that is mostly BBC stays under B. (3) Only letters and digits
+  count, Latin accents folded (`Équipe` under E), digits = `#`. The sort key is runs of folded
+  letters and numbers by value (`Canal 2` < `Canal 10`); `#` first, nameless last, stable. Sorted
+  (Settings > List order, default A-Z): live channels, videos, films, series, Xtream categories
+  (`All` stays first); never episodes. Zapping follows the shown order. Vol- = next letter
+  (down), Vol+ = previous (user: more natural than the first mapping); an unsorted list jumps
+  one block of equal letters at a time.
+
+## 42. "Could not get/set settings from/on resource": HDMI audio channel mapping (2026-11-22)
+
+- **Symptom:** some films stopped at once with GStreamer's stock text for
+  `GST_RESOURCE_ERROR_SETTINGS`. That text appears when the element gives no message of its own;
+  kmssink always does (`Could not find a plane for crtc`, ...), so the bare text pointed at
+  `alsasink` (or rtspsrc). More codecs would not help: a missing codec is a different error.
+- **Verbosity first** (h96player): error and warning lines are now `error: <msg> [<element>:
+  <last line of the debug string>]`, plus `detail: <full debug string>`; h96ui sets
+  `GST_DEBUG=2,alsa:4 GST_DEBUG_FILE=/tmp/h96player-gst.log` for every player run (unless
+  GST_DEBUG is already set). First real hit: `[alsasink0: Unable to set hw params for playback:
+  Invalid argument]`; dmesg: `hdmi-audio-codec ...: Not able to map channels to speakers (-22)`,
+  `ASoC: error at snd_soc_dai_hw_params on i2s-hifi: -22`.
+- **Cause:** a multichannel (5.1) track. `plughw` advertises everything (4 kHz-2 MHz, 1-n
+  channels) and passes the channel count through; the HDMI codec looks it up in the speaker
+  allocation the TV reports (stereo) and refuses. Reproduced without any stream:
+  `audiotestsrc wave=silence ! audio/x-raw,channels=6,rate=48000 ! alsasink device=plughw:CARD=rockchiphdmi,DEV=0`
+  fails the same way; with `audioconvert ! audioresample ! capsfilter caps=audio/x-raw,channels=2`
+  in front it plays.
+- **Fix:** h96player `-C N` (default 2; 0 = as the source) wraps alsasink in a bin with that
+  converter chain (audioconvert's downmix matrix, not a channel drop); EBI passes it from
+  Settings > Audio channels (stereo default, "as the source" for a TV/amplifier that takes
+  5.1); mpv gets `--audio-channels=stereo`. Not done: reading the TV's ELD to choose
+  automatically (`/proc/asound/card0` has no `eld#` file on this kernel).
+- Side note in the same log: `Unknown PCM plughw:...:{AES0 ...}` is alsasink probing IEC958
+  passthrough on a device string that already has arguments: harmless.

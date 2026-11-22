@@ -1,6 +1,6 @@
 #!/bin/sh
 # Hardware-video userspace for the box (Alpine arm64, musl), built in the arm64 Alpine container:
-#   podman run --rm --arch arm64 -v ~/Sources/ClaudePlayground/H96Max:/work:z \
+#   podman run --rm --arch arm64 -v "$PWD":/work:z \
 #     -e STAGES="mpp rga ffmpeg gst" docker.io/library/alpine:3.24.4 sh /work/tools/video/build-mpp.sh
 # Stages (default all, in order; each installs into build/video/stage, which persists):
 #   mpp     librockchip_mpp + mpi_dec_test & co   (downloads/mpp, rockchip-linux develop)
