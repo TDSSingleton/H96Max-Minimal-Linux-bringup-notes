@@ -58,3 +58,19 @@
 	url = https://github.com/neardi/neardi-3588-sdk-linux.git
 	branch = master
 	shallow = true
+[submodule "downloads/mpp"]
+	path = downloads/mpp
+	url = https://github.com/rockchip-linux/mpp.git
+	branch = develop
+[submodule "downloads/ffmpeg-rockchip"]
+	path = downloads/ffmpeg-rockchip
+	url = https://github.com/nyanmisaka/ffmpeg-rockchip.git
+[submodule "downloads/gstreamer-rockchip"]
+	path = downloads/gstreamer-rockchip
+	url = https://github.com/JeffyCN/mirrors.git
+	branch = gstreamer-rockchip
+	shallow = true
+[submodule "downloads/librga"]
+	branch = jellyfin-rga
+	url = https://github.com/nyanmisaka/rk-mirrors.git
+	path = downloads/librga

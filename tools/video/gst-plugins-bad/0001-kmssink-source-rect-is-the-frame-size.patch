@@ -1,0 +1,17 @@
+--- a/sys/kms/gstkmssink.c
++++ b/sys/kms/gstkmssink.c
+@@ -2190,8 +2190,12 @@
+     src.w = crop->width;
+     src.h = crop->height;
+   } else {
+-    src.w = video_width;
+-    src.h = video_height;
++    /* the source rectangle is the frame itself; video_width/height are the
++     * pixel-aspect-corrected display size (720x576 PAR 64:45 -> 1024x576) and
++     * only matter for centering above. Using them here makes the kernel reject
++     * anamorphic SD frames: "Invalid source coordinates" (-ENOSPC). */
++    src.w = GST_VIDEO_INFO_WIDTH (vinfo);
++    src.h = GST_VIDEO_INFO_HEIGHT (vinfo);
+   }
+ 
+   /* handle out of screen case */

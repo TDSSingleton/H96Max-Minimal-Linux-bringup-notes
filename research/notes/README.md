@@ -40,5 +40,9 @@ Current state (2026-11-21 evening): hardware layer done -- our u-boot + arm64 ke
 | 31 | Input: no IR receiver (stick), CEC unavailable; gpio-watch method | [13-input-and-bluetooth.md](13-input-and-bluetooth.md) |
 | 32 | Bluetooth: skwbt port, lite NV, codec-query crash, remote paired | [13-input-and-bluetooth.md](13-input-and-bluetooth.md) |
 | 33 | Starting point for the VPU / GPU job (MPP, RGA, VOP2 planes, Mali-450) | [12-interface-and-video.md](12-interface-and-video.md) |
+| 34 | Hardware video works: MPP on musl, VPU decode, VOP2 plane (Esmart1), skip-vsync, video in a console box | [12-interface-and-video.md](12-interface-and-video.md) |
+| 35 | Real channels: kmssink anamorphic-SD fix, server-throughput stalls, playlist HTTP headers | [12-interface-and-video.md](12-interface-and-video.md) |
+| 36 | h96player: playlist HTTP headers (UA/Referer reach every HLS segment) and a prebuffer with hysteresis | [12-interface-and-video.md](12-interface-and-video.md) |
+| 37 | Videos vs live, OK button via evdev, h96player control + box OSD, playbin seek deadlock -> playbin3 | [12-interface-and-video.md](12-interface-and-video.md) |
 
 Related: `../vendor-kernel-6.1.118.config` (factory kernel `.config`, §20).

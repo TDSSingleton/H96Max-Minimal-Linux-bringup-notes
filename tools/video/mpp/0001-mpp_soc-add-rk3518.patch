@@ -1,0 +1,22 @@
+diff --git a/osal/mpp_soc.c b/osal/mpp_soc.c
+index c146e55..a8e8ef4 100644
+--- a/osal/mpp_soc.c
++++ b/osal/mpp_soc.c
+@@ -1009,6 +1009,17 @@ static const MppSocInfo mpp_soc_infos[] = {
+         {   &vdpu382, &rkjpegd, &vdpu2, &avspd, NULL, NULL, },
+         {   &vepu540c, NULL, NULL, NULL, },
+     },
++    {   /*
++         * rk3518 (H96 Max TV stick) is an RK3528-family SKU; its DT says
++         * "rockchip,rk3518" and the decoder is "rockchip,rkv-decoder-rk3528".
++         * Same codec set as rk3528 (H.264/H.265 4K decoder, 1080P encoder, jpeg, vpu2).
++         */
++        "rk3518",
++        ROCKCHIP_SOC_RK3528,
++        HAVE_RKVDEC | HAVE_RKVENC | HAVE_VDPU2 | HAVE_JPEG_DEC | HAVE_AVSDEC,
++        {   &vdpu382, &rkjpegd, &vdpu2, &avspd, NULL, NULL, },
++        {   &vepu540c, NULL, NULL, NULL, },
++    },
+     {   /*
+         * rk3528a has codec:
+          * 1 - vpu2 for jpeg/vp8 decoder

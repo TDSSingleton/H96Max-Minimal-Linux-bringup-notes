@@ -1,0 +1,20 @@
+#!/bin/sh
+# h96play URL-or-file -- hardware video playback on the box (prototype, NOTES §34).
+# VPU decode (gstreamer-rockchip mppvideodec, picked by playbin via its rank) -> zero-copy NV12
+# dmabuf -> kmssink on VOP2 plane Esmart1-win0, hardware-scaled to the HDMI mode; audio to HDMI.
+#   PLANE: must be an independent "-winN0" layer: Esmart0-win1..3 share Esmart0-win0's (the
+#          console's) format and scaler -> NV12 there shows green garbage.
+#   skip-vsync: the vendor kernel's legacy SetPlane already blocks to vblank; kmssink waiting
+#          again halves the frame rate (26 -> ~51 fps on a 60p stream).
+#   RECT="x,y,w,h": show the video in that screen rectangle (HDMI-mode pixels) instead of full
+#          screen; the console (h96ui) stays visible around it -- the VOP composites the two layers.
+#   FPS=1 prints rendered/dropped frame counts.
+set -eu
+U=${1:?usage: h96play URL-or-file}
+case $U in *://*) ;; *) U=file://$(realpath "$U") ;; esac
+PLANE=${PLANE:-172} CONN=${CONN:-371}
+VS="kmssink plane-id=$PLANE connector-id=$CONN skip-vsync=true"
+[ -n "${RECT:-}" ] && VS="$VS render-rectangle=<$RECT>"
+# gst-launch re-parses its joined argv, so the quotes around bin descriptions must be literal
+V=; [ "${FPS:-0}" = 1 ] && { V=-v; VS="fpsdisplaysink text-overlay=false video-sink=\\\"$VS\\\""; }
+exec gst-launch-1.0 $V playbin uri="$U" video-sink="\"$VS\"" audio-sink="\"alsasink device=plughw:0\""
