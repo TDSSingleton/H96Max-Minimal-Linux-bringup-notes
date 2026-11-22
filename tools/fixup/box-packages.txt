@@ -9,3 +9,6 @@ gst-libav
 alsa-lib
 fuse-exfat
 libdrm-tests
+# EBI draws its own text with GNU Unifont (fb.rs: /usr/share/unifont/unifont.hex):
+# Arabic, Hebrew, Japanese, Chinese, Korean names the console font cannot show
+unifont-misc

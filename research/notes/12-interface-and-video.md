@@ -380,3 +380,39 @@ rootfs build and the fixup kit keep working.
   automatically (`/proc/asound/card0` has no `eld#` file on this kernel).
 - Side note in the same log: `Unknown PCM plughw:...:{AES0 ...}` is alsasink probing IEC958
   passthrough on a device string that already has arguments: harmless.
+
+## 43. EBI 0.7: its own text renderer (Unifont) and favorites (2026-11-22)
+
+- **Why:** names in Arabic, Hebrew, Japanese, Chinese, Korean showed as garbage. The kernel
+  console holds at most 512 glyphs (Terminus: Latin/Greek/Cyrillic), so no console font can fix
+  CJK; Alpine ships no fbterm/kmscon.
+- **How (`fb.rs`, `text.rs`):** tty1 goes to `KD_GRAPHICS` (fbcon stops drawing; keys still
+  arrive on the tty), `/dev/fb0` (1920x1080, 32 bpp, stride 7680) is mmapped, and everything EBI
+  already wrote for the console (SGR colours, CUP, EL, ED, CR/LF; the player's cards and OSD
+  too) is interpreted into a 120x33 cell grid and drawn with **GNU Unifont** (`unifont.hex` from
+  Alpine's `unifont-misc`: 8x16 / 16x16 bitmaps for the BMP, doubled to 16x32 cells). Only rows
+  that changed are redrawn. CJK takes two cells (`char_width`, also used by `fit()`), combining
+  marks are skipped, U+FFFD for missing glyphs. Arabic: letters mapped to their joined
+  presentation forms (isolated/final/initial/medial + lam-alef ligatures, Persian letters
+  included); RTL runs reversed in a left-to-right line, numbers after RTL text join the run,
+  brackets mirrored, width kept (a ligature is padded). Not a full UBA/HarfBuzz: good enough
+  for names (the whole method, with worked examples: [14-text-rendering.md](14-text-rendering.md)). Falls back to the plain console if the font or a 32 bpp fb0 is missing;
+  `H96UI_CONSOLE=1` forces the console. SIGTERM/SIGINT/SIGHUP and a normal exit put tty1 back
+  in `KD_TEXT`; mpv (software path) gets the console via suspend/resume. RSS 17 MB with the
+  font. Checked by reading fb0 back into a PNG; a multi-script sample renders with
+  `H96UI_FONT=… H96UI_RENDER_OUT=… cargo test render_sample -- --ignored`.
+- musl's `ioctl()` takes an `int` request (glibc: `unsigned long`): `KDSETMODE as _`.
+- **Favorites:** the remote's Google button sends **KEY_SEARCH (217)** on the Consumer Control
+  input (captured with raw `cat /dev/input/event4`: evtest piped through grep wrote nothing,
+  its stdout is block-buffered and the timeout killed it). In any channel/video list it stars or
+  unstars the selection (★ in the right column), during playback the current channel (OSD
+  note), in Favorites it removes. Main menu → **Favorites**: A-Z, live ones zap among each other
+  with Up/Down, videos play alone; hold OK = remove. Stored as `/var/lib/h96ui/favorites.m3u`
+  (a normal playlist, headers as `#EXTVLCOPT` and the Kodi `|` suffix, round-trip tested),
+  **mode 0600: Xtream URLs carry the account password** -- a provider file for the rules.
+  Keyboard: `*` or `f`.
+- **0.7.2:** each subscription has its own "Favorites (n)" at the top, picked by stream URL (an
+  M3U subscription's playlist entries; an Xtream account's `server/…/<user>/…` URLs), so nothing
+  is tagged in favorites.m3u and favorites starred earlier are included; the main menu still
+  lists all. Starred entries are drawn in Settings > Favorite color (cyan = the bars' colour,
+  yellow, green, magenta, red; bright text, and a bar of that colour when selected).

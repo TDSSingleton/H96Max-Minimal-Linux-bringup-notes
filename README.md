@@ -45,7 +45,9 @@ Take control back of your devices, it is time.
   remote: subscriptions and WiFi networks from a USB stick (M3U files, playlist URLs, Xtream
   accounts, `ssid=`/`password=` files), live channels and on-demand videos, Xtream Live TV /
   Movies / Series with categories and seasons, A-Z lists that ignore provider prefixes like
-  `|FR|` or `[Italy]`, a Vol-key letter jump and hold-to-scroll.
+  `|FR|` or `[Italy]`, a Vol-key letter jump and hold-to-scroll, favorites on the remote's
+  Google button. It draws its own text on the framebuffer with GNU Unifont, so Arabic, Hebrew,
+  Japanese, Chinese and Korean names display (the kernel console font cannot hold them).
 - **Hardware video without a GPU.** Rockchip MPP on Alpine/musl (patched for the RK3518), 1080p60
   H.264 decoded at 166 fps with ~6 % CPU; frames go zero-copy onto a VOP2 display plane above the
   console. Our player `h96player` (GStreamer playbin3) adds playlist HTTP headers, a prebuffer

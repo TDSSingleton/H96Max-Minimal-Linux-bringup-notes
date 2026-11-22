@@ -3,6 +3,7 @@
 //! Driven by the Bluetooth remote: arrows/OK arrive on the console, Back/Home via evdev
 //! (remote.rs); a keyboard works too (Esc/Backspace = Back).
 
+mod fb;
 mod json;
 mod m3u;
 mod names;
@@ -12,9 +13,11 @@ mod screens;
 mod store;
 mod sys;
 mod term;
+mod text;
 mod wifi;
 mod xtream;
 
+use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -36,15 +39,22 @@ pub struct Item {
     pub right: String,
     pub action: Option<Action>,
     pub options: Option<Action>, // hold OK / Menu button: the item's options (e.g. Remove)
+    pub fav: Option<Rc<m3u::Channel>>, // a playable item: the Google button stars it
 }
 
 impl Item {
     pub fn new(label: impl Into<String>, right: impl Into<String>, f: impl Fn(&mut App) + 'static) -> Item {
-        Item { label: label.into(), right: right.into(), action: Some(Rc::new(f)), options: None }
+        Item { label: label.into(), right: right.into(), action: Some(Rc::new(f)), options: None, fav: None }
     }
 
     pub fn with_options(mut self, f: impl Fn(&mut App) + 'static) -> Item {
         self.options = Some(Rc::new(f));
+        self
+    }
+
+    /// Marks the item as a channel/video the Google button can add to Favorites.
+    pub fn with_fav(mut self, c: &m3u::Channel) -> Item {
+        self.fav = Some(Rc::new(c.clone()));
         self
     }
 }
@@ -84,11 +94,35 @@ pub struct App {
     remote: Option<remote::Remote>,
     secrets: Vec<String>, // Xtream passwords: never shown on the TV (say() and the player)
     menu_repeat: bool,    // a held Up/Down scrolls (menus only, not the player)
+    pub favs: Vec<m3u::Channel>, // favorites.m3u (store.rs), matched by stream URL
 }
 
 impl App {
+    pub fn is_fav(&self, url: &str) -> bool {
+        self.favs.iter().any(|f| f.url == url)
+    }
+
+    /// Adds or removes a favorite (saved at once); true if it is a favorite now.
+    pub fn toggle_fav(&mut self, c: &m3u::Channel) -> bool {
+        let now = if let Some(i) = self.favs.iter().position(|f| f.url == c.url) {
+            self.favs.remove(i);
+            false
+        } else {
+            self.favs.push(c.clone());
+            true
+        };
+        if let Err(e) = store::save_favorites(&self.favs) {
+            self.say(format!("Could not save favorites: {e}"));
+        }
+        now
+    }
+
     fn top(&mut self) -> &mut Screen {
         self.stack.last_mut().expect("screen stack is never empty")
+    }
+
+    pub fn top_mut(&mut self) -> &mut Screen {
+        self.top()
     }
 
     fn run_refresh(&mut self, s: &mut Screen) {
@@ -171,7 +205,7 @@ impl App {
             sys::alpine_release(),
             sys::kernel_release()
         );
-        let right = "Up/Down  Vol-/+: A-Z  OK  Hold OK: options  Back  ";
+        let right = "Vol-/+: A-Z  Hold OK: options  Google: favorite  Back  ";
         let gap = self.cols as isize - width(&left) - width(right);
         if gap < 1 {
             return format!("{C_FOOTER}{}{C_RESET}", fit(&left, self.cols as isize));
@@ -222,14 +256,20 @@ impl App {
                 s.top = s.sel + 1 - lr;
             }
             let w = cols - 8;
+            let star = if rich_text() { "★ " } else { "* " };
+            let fc = fav_color(&self.settings.fav_color);
             for i in s.top..s.items.len().min(s.top + lr) {
                 let it = &s.items[i];
-                let lw = w - width(&it.right) - 2;
-                let txt = format!("{}  {}", fit(&it.label, lw), it.right);
-                if i == s.sel {
-                    line(&format!("  {C_SEL}> {} {C_RESET}", fit(&txt, w)));
-                } else {
-                    line(&format!("    {}", fit(&txt, w)));
+                let starred = it.fav.as_ref().is_some_and(|c| self.favs.iter().any(|f| f.url == c.url));
+                let right = if starred { format!("{star}{}", it.right) } else { it.right.clone() };
+                let lw = w - width(&right) - 2;
+                let txt = format!("{}  {}", fit(&it.label, lw), right);
+                // favorites in their colour; selected: black on that colour (like the bars)
+                match (i == s.sel, starred) {
+                    (true, false) => line(&format!("  {C_SEL}> {} {C_RESET}", fit(&txt, w))),
+                    (true, true) => line(&format!("  \x1b[0;30;4{fc}m> {} {C_RESET}", fit(&txt, w))),
+                    (false, true) => line(&format!("    \x1b[1;3{fc}m{}{C_RESET}", fit(&txt, w))),
+                    (false, false) => line(&format!("    {}", fit(&txt, w))),
                 }
                 used += 1;
             }
@@ -264,8 +304,11 @@ impl App {
         }
         // the console can change size under us (h96-console sets 1080p + a 16x32 font at boot)
         let mut out = String::new();
-        if let Some(t) = &self.term {
-            let (r, c) = t.size();
+        let size = match fb_size() {
+            Some(rc) => Some(rc),
+            None => self.term.as_ref().map(|t| t.size()),
+        };
+        if let Some((r, c)) = size {
             if (r, c) != (self.rows, self.cols) {
                 (self.rows, self.cols) = (r, c);
                 out.push_str("\x1b[2J");
@@ -383,6 +426,19 @@ impl App {
                 let msg = format!("{letter}   {} / {n}", to + 1);
                 self.say(msg);
             }
+            // the Google button: star / unstar the selected channel or video
+            Key::Fav => match s.items.get(s.sel).and_then(|it| it.fav.clone()) {
+                Some(c) => {
+                    let on = self.toggle_fav(&c);
+                    self.say(if on { format!("Added to Favorites: {}", c.name) } else { format!("Removed from Favorites: {}", c.name) });
+                    if self.top().title == "Favorites" {
+                        self.refresh_top();
+                        let s = self.top();
+                        s.sel = s.sel.min(s.items.len().saturating_sub(1));
+                    }
+                }
+                None => self.say("The Google button adds a channel or video to Favorites: select one first"),
+            },
             Key::Back | Key::Left => self.pop(),
             Key::MainMenu => self.go_home(),
             Key::Quit => return !self.quit_ok,
@@ -393,6 +449,7 @@ impl App {
 
     /// Hands the terminal to another program (the player) and takes it back.
     pub fn run_external<T>(&mut self, f: impl FnOnce(&mut App) -> T) -> T {
+        FB.with(|fb| fb.borrow_mut().as_mut().map(|f| f.suspend()));
         if let Some(t) = self.term.as_mut() {
             t.restore();
         }
@@ -401,6 +458,7 @@ impl App {
         if let Some(t) = self.term.as_mut() {
             let _ = t.raw();
         }
+        FB.with(|fb| fb.borrow_mut().as_mut().map(|f| f.resume()));
         write_out("\x1b[?25l\x1b[2J");
         r
     }
@@ -416,29 +474,78 @@ const C_DIM: &str = "\x1b[0;37m";
 const C_MSG: &str = "\x1b[1;33m";
 const C_FOOTER: &str = "\x1b[0;30;46m";
 
-fn width(s: &str) -> isize {
-    s.chars().count() as isize
+/// Settings > Favorite color: name -> ANSI colour number (cyan = the bars' colour).
+pub const FAV_COLORS: [(&str, u8); 5] = [("cyan", 6), ("yellow", 3), ("green", 2), ("magenta", 5), ("red", 1)];
+
+fn fav_color(name: &str) -> u8 {
+    FAV_COLORS.iter().find(|(n, _)| *n == name).map_or(6, |(_, c)| *c)
 }
 
-/// Pads or cuts `s` to exactly `w` characters ("~" marks a cut).
+/// Display width in cells (CJK = 2, combining marks = 0; text.rs).
+pub fn width(s: &str) -> isize {
+    text::width(s) as isize
+}
+
+/// Pads or cuts `s` to exactly `w` cells ("~" marks a cut).
 pub fn fit(s: &str, w: isize) -> String {
     if w <= 0 {
         return String::new();
     }
     let w = w as usize;
-    let n = s.chars().count();
+    let n = text::width(s);
     if n <= w {
         return format!("{s}{}", " ".repeat(w - n));
     }
-    if w <= 1 {
-        return s.chars().take(w).collect();
+    let mut o = String::new();
+    let mut used = 0;
+    for c in s.chars() {
+        let cw = text::char_width(c);
+        if used + cw > w.saturating_sub(1) {
+            break;
+        }
+        o.push(c);
+        used += cw;
     }
-    let mut o: String = s.chars().take(w - 1).collect();
-    o.push('~');
-    o
+    if w > 1 {
+        o.push('~');
+        used += 1;
+    }
+    o + &" ".repeat(w - used.min(w))
 }
 
-fn write_out(s: &str) {
+thread_local! {
+    /// EBI's own renderer (fb.rs) when it could take the screen; None = the kernel console.
+    static FB: RefCell<Option<fb::Fb>> = const { RefCell::new(None) };
+}
+
+/// The renderer's grid size if it is active (re-mapping fb0 after an HDMI mode change).
+fn fb_size() -> Option<(usize, usize)> {
+    FB.with(|f| {
+        let mut f = f.borrow_mut();
+        let fb = f.as_mut()?;
+        if fb.stale() && !fb.remap() {
+            return None;
+        }
+        Some((fb.rows, fb.cols))
+    })
+}
+
+/// True when EBI draws its own text (Unicode: stars, Arabic, Japanese, ...).
+pub fn rich_text() -> bool {
+    FB.with(|f| f.borrow().is_some())
+}
+
+pub fn write_out(s: &str) {
+    let done = FB.with(|f| match f.borrow_mut().as_mut() {
+        Some(fb) => {
+            fb.write(s);
+            true
+        }
+        None => false,
+    });
+    if done {
+        return;
+    }
     let mut o = std::io::stdout().lock();
     let _ = o.write_all(s.as_bytes());
     let _ = o.flush();
@@ -471,7 +578,7 @@ fn parse_args() -> Result<Args, String> {
             "allow-quit" => a.allow_quit = true,
             "version" => a.version = true,
             "h" | "help" => {
-                return Err("usage: h96ui [-snapshot main|subs|channels|settings|about|usb|wifi] [-allow-quit] [-version] [-xtream-check FILE] [-xtream-add FILE]".into())
+                return Err("usage: h96ui [-snapshot main|subs|channels|favorites|settings|about|usb|wifi] [-allow-quit] [-version] [-xtream-check FILE] [-xtream-add FILE]".into())
             }
             _ => return Err(format!("unknown flag: {arg}")),
         }
@@ -574,6 +681,7 @@ fn main() {
         remote: None,
         secrets: Vec::new(),
         menu_repeat: false,
+        favs: store::load_favorites(),
     };
     let m = screens::main_menu();
     a.push(m);
@@ -597,6 +705,11 @@ fn main() {
     if let Err(e) = t.raw() {
         eprintln!("h96ui: raw mode: {e}");
         std::process::exit(1);
+    }
+    // our own renderer if Unifont and a 32 bpp fb0 are there (H96UI_CONSOLE=1: never)
+    if let Some(f) = fb::Fb::open(t.fd()) {
+        (a.rows, a.cols) = (f.rows, f.cols);
+        FB.with(|fb| *fb.borrow_mut() = Some(f));
     }
     a.term = Some(t);
     a.remote = Some(remote::Remote::new());
@@ -627,6 +740,7 @@ fn main() {
             a.draw();
         }
     }
+    FB.with(|fb| drop(fb.borrow_mut().take())); // back to the console (KD_TEXT)
     if let Some(t) = a.term.as_mut() {
         t.restore();
     }

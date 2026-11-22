@@ -9,7 +9,7 @@ night). How we got here: [bringup-journal.md](bringup-journal.md). When somethin
 
 **A working minimal Linux IPTV stick.** Our 64-bit u-boot, vendor 6.1.172 kernel (#5), Alpine
 3.24.4 on the old Android `userdata`, WiFi + Bluetooth at boot, the stick's **Bluetooth remote**
-driving **EBI 0.6.4** ("Extremely Basic IPTV", the Rust frontend; binary, paths and User-Agent
+driving **EBI 0.7.1** ("Extremely Basic IPTV", the Rust frontend; binary, paths and User-Agent
 keep the name h96ui) on the HDMI console. **Access: ssh with the project key only; root has no
 usable password** (`*`), so no console login either (2026-11-22). **Hardware video:** VPU decode
 (Rockchip MPP) → zero-copy NV12 → a VOP2 display plane, through our own player **h96player**
@@ -33,6 +33,14 @@ the provider's order). Playback: audio is downmixed to stereo before HDMI (Setti
 channels): 5.1 tracks had failed with "Could not get/set settings from/on resource", the HDMI
 codec refusing channels the TV has no speakers for. h96player errors now name the element and
 the real reason; logs in `/tmp/h96ui-player.log` and `/tmp/h96player-gst.log`.
+**New in 0.7 (NOTES §43):** EBI draws its own text on the framebuffer with GNU Unifont
+(`unifont-misc`), so Arabic, Hebrew, Japanese, Chinese and Korean names show (Arabic joined,
+right-to-left); `H96UI_CONSOLE=1` falls back to the kernel console. **Favorites:** the remote's
+Google button stars a channel/video (lists, and while playing); main menu → Favorites (all),
+and each subscription's own Favorites at its top (0.7.2); starred entries in a colour chosen in
+Settings > Favorite color.
+`/var/lib/h96ui/favorites.m3u` holds provider stream URLs (Xtream passwords): off-limits like
+the subscriptions.
 **WiFi:** the SeekWave driver's rx reorder buffer is switched **off** at boot by `h96-wifi`: with
 it on, distant IPTV servers ran at ~0.3 Mbit/s and no live channel played (NOTES §40).
 
@@ -63,7 +71,7 @@ it in h96ui (or delete `/var/lib/h96ui/subs/192.168.11.110 8766.xtream`) once a 
 is in. "Test streams" has Big Buck Bunny and Apple's bipbop marked as videos.
 
 **Fixup kit installed** (`push-to-box.sh`, last run 2026-11-22 ~20:30): EBI 0.6.4 in
-`/usr/local/bin/h96ui`, `h96ui.prev` = 0.6.3 (`h96-fix ui-rollback`; 0.6.3 runs with the new
+`/usr/local/bin/h96ui` (now 0.7.1), `h96ui.prev` = 0.7.0 (`h96-fix ui-rollback`; any build from 0.6.4 on runs with the new
 h96player, the reverse does not: the old h96player has no `-C`, and **no copy of the previous
 h96player is kept**), h96player in `/usr/bin`, kmssink reference copy in `/usr/local/share/h96`,
 `h96-doctor` 0 problems (it now also checks root's password and key-only sshd). Old auth files
@@ -141,7 +149,8 @@ the network. The UI stays a CLI/console (no GPU, no graphical UI).
 
 ## Open items, roughly in order
 
-0. **Try 0.6.4 on the TV** (not yet confirmed by the user): autoscroll on a long list, Vol-/+
+0. **Try 0.7.1 on the TV** (not yet confirmed by the user): favorites (Google button in a list
+   and while playing), non-Latin names in real lists; and from 0.6: autoscroll on a long list, Vol-/+
    letter jumps in a French/Italian category, A-Z order, a film that had failed with the audio
    error, Add WiFi from USB with a test file.
 

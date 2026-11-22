@@ -8,9 +8,10 @@ use std::rc::Rc;
 
 pub fn main_menu() -> Screen {
     let mut s = Screen::titled("EBI");
-    s.refresh = Some(Rc::new(|_a: &mut App, s: &mut Screen| {
+    s.refresh = Some(Rc::new(|a: &mut App, s: &mut Screen| {
         let n = store::list_subscriptions().len();
         s.items = vec![
+            Item::new("Favorites", a.favs.len().to_string(), |a| a.push(favorites_screen(None))),
             Item::new("Subscriptions", n.to_string(), |a| a.push(subs_screen())),
             Item::new("Add subscription from USB", "", |a| a.push(usb_screen())),
             Item::new("Add WiFi from USB", sys::read_wifi().ssid, |a| a.push(wifi_usb_screen())),
@@ -49,9 +50,42 @@ fn subs_screen() -> Screen {
     s
 }
 
+/// Which favorites come from a subscription, by stream URL: an M3U subscription's own
+/// playlist entries; an Xtream account's server + username (its URLs are
+/// server/live|movie|series/<user>/<pass>/<id>.<ext>). Works for favorites starred before this
+/// existed: nothing is tagged in favorites.m3u.
+type FavFilter = Rc<dyn Fn(&crate::m3u::Channel) -> bool>;
+
+fn sub_fav_filter(sub: &Subscription) -> FavFilter {
+    if let Some(acc) = &sub.xtream {
+        let prefix = format!("{}/", acc.server);
+        let user = format!("/{}/", acc.username);
+        return Rc::new(move |c| c.url.starts_with(&prefix) && c.url.contains(&user));
+    }
+    let urls: std::collections::HashSet<String> =
+        sub.channels().unwrap_or_default().into_iter().map(|c| c.url).collect();
+    Rc::new(move |c| urls.contains(&c.url))
+}
+
+/// "Favorites (n)" at the top of a subscription; the count is refreshed whenever the screen
+/// is shown again (after starring something inside it).
+fn add_sub_favorites(s: &mut Screen, sub: &Subscription) {
+    let f = sub_fav_filter(sub);
+    let open = f.clone();
+    s.items.insert(0, Item::new("Favorites", "", move |a| a.push(favorites_screen(Some(open.clone())))));
+    s.refresh = Some(Rc::new(move |a: &mut App, s: &mut Screen| {
+        let n = a.favs.iter().filter(|c| f(c)).count();
+        if let Some(it) = s.items.first_mut() {
+            it.right = n.to_string();
+        }
+    }));
+}
+
 fn sub_actions(sub: Subscription) -> Screen {
     if let Some(acc) = sub.xtream.clone() {
-        return xtream_screen(sub, acc);
+        let mut s = xtream_screen(sub.clone(), acc);
+        add_sub_favorites(&mut s, &sub);
+        return s;
     }
     let mut s = Screen::titled(sub.name.clone());
     // live channels and on-demand videos get separate lists (m3u.rs Channel::is_vod)
@@ -76,7 +110,9 @@ fn sub_actions(sub: Subscription) -> Screen {
             }
         }));
     }
+    let fav_sub = sub.clone();
     s.items.push(remove_item(sub));
+    add_sub_favorites(&mut s, &fav_sub);
     s
 }
 
@@ -267,14 +303,15 @@ fn play_list_screen(title: &str, list: Vec<crate::m3u::Channel>, vod: bool, empt
     for (i, c) in all.iter().enumerate() {
         let all = all.clone();
         let right = if vod && c.duration > 0 { fmt_duration(c.duration) } else { String::new() };
-        s.items.push(Item::new(c.name.clone(), right, move |a| {
+        let item = Item::new(c.name.clone(), right, move |a| {
             match play::play_hw(a, &all, i, vod) {
                 Ok(msg) if !msg.is_empty() => a.say(msg),
                 Ok(_) => {}
                 Err(e) => a.say(format!("Playback: {e}")),
             }
             a.redraw_all();
-        }));
+        });
+        s.items.push(item.with_fav(c));
     }
     s
 }
@@ -317,6 +354,7 @@ fn channels_screen(a: &App, sub: Subscription, vod: bool) -> Screen {
         } else {
             c.group.clone()
         };
+        let fav = c.clone();
         s.items.push(Item::new(c.name, right.trim().to_string(), move |a| {
             if a.settings.decoder == "software" {
                 if let Err(e) = a.run_external(|a| play::play(a, &sub, orig)) {
@@ -330,8 +368,60 @@ fn channels_screen(a: &App, sub: Subscription, vod: bool) -> Screen {
                 Err(e) => a.say(format!("Playback: {e}")),
             }
             a.redraw_all();
-        }));
+        }).with_fav(&fav));
     }
+    s
+}
+
+/// Starred channels and videos from every subscription (favorites.m3u). Live ones zap among
+/// each other with Up/Down; a video plays on its own. The Google button (or hold OK) removes.
+/// `only`: a subscription's favorites (sub_fav_filter); None = all of them (main menu).
+fn favorites_screen(only: Option<FavFilter>) -> Screen {
+    let mut s = Screen::titled("Favorites");
+    s.empty = if only.is_some() {
+        "No favorites from this subscription yet. Press the Google button on one of its channels or videos."
+    } else {
+        "No favorites yet. Press the Google button on a channel or a video to add it."
+    }
+    .into();
+    s.refresh = Some(Rc::new(move |a: &mut App, s: &mut Screen| {
+        let mine: Vec<_> = a.favs.iter().filter(|c| only.as_ref().is_none_or(|f| f(c))).cloned().collect();
+        let favs = az(a, mine, |c| c.name.as_str());
+        let live = Rc::new(favs.iter().filter(|c| !c.is_vod()).cloned().collect::<Vec<_>>());
+        s.items.clear();
+        let mut live_i = 0;
+        for c in favs {
+            let vod = c.is_vod();
+            let (list, i) = if vod { (Rc::new(vec![c.clone()]), 0) } else { (live.clone(), live_i) };
+            if !vod {
+                live_i += 1;
+            }
+            let right = if vod { if c.duration > 0 { format!("video  {}", fmt_duration(c.duration)) } else { "video".into() } } else { c.group.clone() };
+            let rm = c.clone();
+            let item = Item::new(c.name.clone(), right, move |a| {
+                match play::play_hw(a, &list, i, vod) {
+                    Ok(msg) if !msg.is_empty() => a.say(msg),
+                    Ok(_) => {}
+                    Err(e) => a.say(format!("Playback: {e}")),
+                }
+                a.redraw_all();
+                a.refresh_top(); // the player can unstar the channel
+            })
+            .with_options(move |a| {
+                a.toggle_fav(&rm);
+                a.say(format!("Removed from Favorites: {}", rm.name));
+                a.refresh_top();
+                let s = a.top_mut();
+                s.sel = s.sel.min(s.items.len().saturating_sub(1));
+            });
+            s.items.push(item.with_fav(&c));
+        }
+        s.lines = if s.items.is_empty() {
+            Vec::new()
+        } else {
+            vec!["Google button (or hold OK) on an entry removes it.".into(), String::new()]
+        };
+    }));
     s
 }
 
@@ -605,6 +695,11 @@ fn settings_screen() -> Screen {
                 |st| st.decoder = cycle(&st.decoder, &["hardware".into(), "software".into()]),
             ),
             setting(
+                "Favorite color",
+                st.fav_color.clone(),
+                |st| st.fav_color = cycle(&st.fav_color, &crate::FAV_COLORS.iter().map(|(n, _)| n.to_string()).collect::<Vec<_>>()),
+            ),
+            setting(
                 "List order",
                 if st.order == "provider" { "as the provider lists them".into() } else { "A-Z".into() },
                 |st| st.order = cycle(&st.order, &["az".into(), "provider".into()]),
@@ -710,6 +805,13 @@ pub fn go_snapshot(a: &mut App, name: &str) {
         }
         "usb" => a.push(usb_screen()),
         "wifi" => a.push(wifi_usb_screen()),
+        "favorites" => a.push(favorites_screen(None)),
+        "subfav" => {
+            if let Some(sub) = store::list_subscriptions().into_iter().next() {
+                a.push(subs_screen());
+                a.push(sub_actions(sub));
+            }
+        }
         _ => {}
     }
 }

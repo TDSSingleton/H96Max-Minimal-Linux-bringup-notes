@@ -80,6 +80,9 @@ build log) -- local recovery is easy, ssh stays key-only; setting a password is 
 | "login refused: check the username and password" | Xtream `user_info.auth` is 0 | check the file; `h96ui -xtream-check FILE` |
 | "not an Xtream server" / "not Xtream JSON" / HTTP 403 | wrong server address, or the panel refuses the User-Agent | try `user_agent: <what the provider's app uses>` in the account file |
 | Account file readable by everyone | copied by hand | `chmod 600 /var/lib/h96ui/subs/*.xtream` (doctor checks) |
+| Arabic / Japanese / Chinese names show as boxes or garbage | EBI < 0.7, or the renderer could not start (no `unifont-misc`, fb0 not 32 bpp) and EBI fell back to the console | `apk add unifont-misc` (in `box-packages.txt`), `h96-fix ui`; check: `grep -c fb0 /proc/$(pidof h96ui)/maps` is 1 when EBI draws itself |
+| Screen frozen on an old EBI picture, keys do nothing visible | EBI was killed hard (SIGKILL) while tty1 was in graphics mode | `h96-fix ui` (a new EBI takes the screen again); for the plain console: `H96UI_CONSOLE=1` |
+| Google button does nothing | it only stars channels/videos (lists, playback); EBI < 0.7 ignores it (KEY_SEARCH 217) | select a channel first; `push-to-box.sh` |
 | Vol-/Vol+ jumps land on "F" (or one letter) in a whole category | a provider prefix the list shares | EBI ≥ 0.6.3 strips shared leads (`|FR| `, `[Italy] `, `[IT] [Serie] `, `ITALY: `); a new prefix style: `names.rs` `lead()` + a test |
 | A list is not in the order the provider shows | lists are A-Z by default (≥ 0.6.2) | Settings → List order → as the provider lists them |
 | Xtream: does it need logging in again? | no: every request carries the account; there is no session | only after an expiry or a password change: import the account again |

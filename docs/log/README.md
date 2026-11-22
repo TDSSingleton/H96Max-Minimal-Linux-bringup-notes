@@ -1,7 +1,7 @@
 # Session log — H96Max RK3518 (index)
 
 **2026-11-19 → 11-22.** Technical detail lives in
-`research/notes/` (index `research/notes/README.md`, §1–§42); these files are the narrative and
+`research/notes/` (index `research/notes/README.md`, §1–§43); these files are the narrative and
 the current state. **Start with [status-and-resume.md](status-and-resume.md).**
 
 | File | Subject |

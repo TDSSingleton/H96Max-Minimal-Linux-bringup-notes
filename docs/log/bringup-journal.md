@@ -438,3 +438,11 @@ bug); doctor: 0 problems. The user's father's Xtream subscription was not touche
   fresh key login cancelled; `h96-doctor` checks both; `build-rootfs.sh` sets `*` too.
 - Five pushes with `push-to-box.sh` (0.6.0 → 0.6.4), each with consent; doctor 0 problems each
   time. No flash writes; no provider file read.
+- **Later the same evening, EBI 0.7 (NOTES §43):** non-Latin names were garbage because the
+  console font has 512 glyphs at most. EBI now draws its own text into the framebuffer with
+  GNU Unifont (Arabic joined and right-to-left, CJK double-width), verified by reading fb0
+  back into a PNG and by a multi-script sample render; the first bidi cut put numbers on the
+  wrong side of Arabic/Hebrew, caught in that sample. Favorites on the remote's Google button
+  (KEY_SEARCH 217, found with a raw evdev capture after a buffered evtest capture came back
+  empty). One push carried only the font package: the cross-build had failed (musl's ioctl
+  type) and `tail` hid the exit status -- builds are now chained with `pipefail`.

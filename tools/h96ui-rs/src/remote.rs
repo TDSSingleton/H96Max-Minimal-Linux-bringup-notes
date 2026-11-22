@@ -26,6 +26,7 @@ const KEY_PLAYPAUSE: u16 = 164;
 const KEY_MENU_REMOTE: u16 = 240; // the remote's Menu button (KEY_UNKNOWN in evtest)
 const KEY_OK: u16 = 352;
 const KEY_SELECT: u16 = 353; // the remote's OK (centre) button
+const KEY_SEARCH: u16 = 217; // the remote's Google button (captured 2026-11-22, event4)
 
 /// struct input_event on 64-bit Linux: struct timeval (16) + type (2) + code (2) + value (4).
 const EVENT_SIZE: usize = 24;
@@ -73,6 +74,7 @@ fn map(code: u16) -> Key {
         KEY_BACK => Key::Back,
         KEY_HOMEPAGE => Key::MainMenu,
         KEY_MENU_REMOTE => Key::Menu,
+        KEY_SEARCH => Key::Fav,
         KEY_VOLUMEUP => Key::VolUp,
         KEY_VOLUMEDOWN => Key::VolDown,
         KEY_MUTE => Key::Mute,

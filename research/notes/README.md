@@ -49,5 +49,7 @@ Current state (2026-11-22): a working IPTV stick -- VPU video via h96player, Rus
 | 40 | "Streaming gone": the SeekWave driver's rx reorder buffer stalls long-RTT TCP (0.3 vs 6.6 Mbit/s); off at boot | [12-interface-and-video.md](12-interface-and-video.md) |
 | 41 | EBI 0.6: WiFi from a USB file, autoscroll (no EV_REP on the remote), letter jump and A-Z order with shared-lead stripping | [12-interface-and-video.md](12-interface-and-video.md) |
 | 42 | "Could not get/set settings": 5.1 audio vs the TV's HDMI speaker allocation; h96player -C downmix and error detail lines | [12-interface-and-video.md](12-interface-and-video.md) |
+| 43 | EBI 0.7: own framebuffer text renderer with Unifont (Arabic/Hebrew/CJK), favorites on the Google button (KEY_SEARCH 217) | [12-interface-and-video.md](12-interface-and-video.md) |
+| (14) | **How the Arabic rendering works**, step by step: glyphs, the four letter forms, lam-alef, right-to-left runs, numbers, layout | [14-text-rendering.md](14-text-rendering.md) |
 
 Related: `../vendor-kernel-6.1.118.config` (factory kernel `.config`, §20).

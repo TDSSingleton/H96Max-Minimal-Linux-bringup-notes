@@ -317,8 +317,8 @@ fn screen_px() -> (i64, i64) {
 
 fn centered(a: &App, row: isize, text: &str, color: &str) -> String {
     let cols = a.cols as isize;
-    let t: String = text.chars().take(cols.max(0) as usize).collect();
-    let col = ((cols - t.chars().count() as isize) / 2).max(0) + 1;
+    let t = if crate::width(text) > cols { crate::fit(text, cols) } else { text.to_string() };
+    let col = ((cols - crate::width(&t)) / 2).max(0) + 1;
     format!("\x1b[{};{}H{color}{t}{}", row.max(1), col, crate::C_RESET)
 }
 
@@ -383,10 +383,10 @@ fn osd(a: &App, title: &str, pos_line: &str, st: &Status, vod: bool, vol: Option
         let dur = if st.dur > 0.0 { hms(st.dur) } else { "--:--".into() };
         b += &centered(a, row + 2, &format!("{}  {bar}  {dur}", hms(st.pos)), "\x1b[0;37m");
         b += &centered(a, row + 3, state, "\x1b[0;33m");
-        b += &centered(a, row + 5, "OK: pause/play   Left/Right: -/+10 s   Up/Down: +/-1 min   Vol: volume   Back: menu", "\x1b[0;36m");
+        b += &centered(a, row + 5, "OK: pause/play   Left/Right: -/+10 s   Up/Down: +/-1 min   Vol: volume   Google: favorite   Back: menu", "\x1b[0;36m");
     } else {
         b += &centered(a, row + 2, pos_line, "\x1b[0;37m");
-        b += &centered(a, row + 5, "Up/Down: channel   OK: info   Vol: volume   Back: menu", "\x1b[0;36m");
+        b += &centered(a, row + 5, "Up/Down: channel   OK: info   Vol: volume   Google: favorite   Back: menu", "\x1b[0;36m");
     }
     b
 }
@@ -440,6 +440,7 @@ pub fn play_hw(a: &mut App, items: &[Channel], mut index: usize, vod: bool) -> R
         }
         let mut osd_until: Option<Instant> = None; // Some = OSD shown (until, unless paused)
         let mut vol_until: Option<Instant> = None; // volume line visible in the OSD until
+        let mut note: Option<(String, Instant)> = None; // "Added to Favorites" in the OSD until
         let mut last_buf = -1;
         let next = loop {
             let k = match a.read_key(Duration::from_millis(200)) {
@@ -471,6 +472,13 @@ pub fn play_hw(a: &mut App, items: &[Channel], mut index: usize, vod: bool) -> R
                     show_osd = true;
                 }
                 Key::Enter if p.st.playing => show_osd = true,
+                Key::Fav => {
+                    let on = a.toggle_fav(ch);
+                    let star = if crate::rich_text() { "★" } else { "*" };
+                    let msg = if on { format!("{star} Added to Favorites") } else { "Removed from Favorites".to_string() };
+                    note = Some((msg, Instant::now() + Duration::from_secs(OSD_SECS)));
+                    show_osd = p.st.playing;
+                }
                 Key::VolUp | Key::VolDown | Key::Mute => {
                     // not saved: Settings > Start volume stays the level each session starts at
                     match k {
@@ -504,7 +512,10 @@ pub fn play_hw(a: &mut App, items: &[Channel], mut index: usize, vod: bool) -> R
                     write_out("\x1b[0m\x1b[2J");
                     osd_until = None;
                 } else if show_osd || changed {
-                    let vl = vol_until.filter(|t| Instant::now() < *t).map(|_| volume_line(a.settings.volume, muted));
+                    let vl = match &note {
+                        Some((m, t)) if Instant::now() < *t => Some(m.clone()),
+                        _ => vol_until.filter(|t| Instant::now() < *t).map(|_| volume_line(a.settings.volume, muted)),
+                    };
                     write_out(&osd(a, &ch.name, &format!("LIVE   {counter}   {}", ch.group), &p.st, vod, vl.as_deref()));
                 }
             }

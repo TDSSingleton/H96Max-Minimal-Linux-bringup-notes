@@ -21,6 +21,7 @@ pub enum Key {
     MainMenu, // the remote's Home button
     Menu,
     LongOk,   // OK held LONG_PRESS (remote.rs): an item's options
+    Fav,      // the remote's Google/search button (KEY_SEARCH 217): favorite on/off
     VolUp,
     VolDown,
     Mute,
@@ -104,6 +105,7 @@ pub fn decode_key(b: &[u8]) -> Key {
         b"\x1b[1~" | b"\x1b[H" | b"\x1bOH" => Key::Home,
         b"\x1b[4~" | b"\x1b[F" | b"\x1bOF" => Key::End,
         b"q" | b"Q" => Key::Quit,
+        b"*" | b"f" | b"F" => Key::Fav,
         _ => Key::None,
     }
 }

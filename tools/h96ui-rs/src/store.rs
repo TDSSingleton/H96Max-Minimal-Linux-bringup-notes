@@ -241,6 +241,62 @@ pub fn import_url(url: &str) -> Result<Imported, String> {
     Ok(Imported::New(name, n))
 }
 
+// ---- favorites ----
+// favorites.m3u: a normal playlist (so the M3U parser reads it back, headers included), mode
+// 0600 because Xtream stream URLs carry the account's password.
+
+pub fn favorites_path() -> PathBuf {
+    data_dir().join("favorites.m3u")
+}
+
+pub fn load_favorites() -> Vec<Channel> {
+    read_text(&favorites_path()).map(|t| parse_m3u(&t)).unwrap_or_default()
+}
+
+/// %-encoding for Kodi's `URL|Name=value&...` header suffix.
+fn kodi_enc(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b' ' | b'/' | b':' | b';' | b',' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+pub fn favorites_m3u(list: &[Channel]) -> String {
+    let one = |s: &str| s.replace(['\r', '\n'], " ");
+    let mut o = String::from("#EXTM3U\n");
+    for c in list {
+        let dur = if c.duration > 0 { c.duration } else { -1 };
+        o += &format!("#EXTINF:{dur} group-title=\"{}\",{}\n", one(&c.group).replace('"', "'"), one(&c.name));
+        if !c.user_agent.is_empty() {
+            o += &format!("#EXTVLCOPT:http-user-agent={}\n", one(&c.user_agent));
+        }
+        if !c.referrer.is_empty() {
+            o += &format!("#EXTVLCOPT:http-referrer={}\n", one(&c.referrer));
+        }
+        let mut url = one(&c.url);
+        if !c.headers.is_empty() {
+            let hs: Vec<String> = c.headers.iter().map(|(k, v)| format!("{}={}", kodi_enc(k), kodi_enc(v))).collect();
+            url = format!("{url}|{}", hs.join("&"));
+        }
+        o += &url;
+        o.push('\n');
+    }
+    o
+}
+
+pub fn save_favorites(list: &[Channel]) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    fs::create_dir_all(data_dir()).map_err(|e| e.to_string())?;
+    let p = favorites_path();
+    let tmp = p.with_extension("m3u.new");
+    let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).map_err(|e| io_text(&e, &tmp))?;
+    f.write_all(favorites_m3u(list).as_bytes()).map_err(|e| io_text(&e, &tmp))?;
+    fs::rename(&tmp, &p).map_err(|e| io_text(&e, &p))
+}
+
 // ---- settings ----
 
 #[derive(Clone, Debug, PartialEq)]
@@ -253,11 +309,12 @@ pub struct Settings {
     pub decoder: String, // hardware (VPU + display plane) | software (mpv)
     pub order: String,   // az (names.rs az_order) | provider (as the playlist/panel lists them)
     pub channels: String, // stereo (downmix: HDMI refuses 5.1 on a stereo TV) | source
+    pub fav_color: String, // favorites in lists: cyan | yellow | green | magenta | red (main.rs FAV_COLORS)
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { cache_secs: 5, deinterlace: false, volume: 80, audio: "hdmi".into(), aspect: "fit".into(), decoder: "hardware".into(), order: "az".into(), channels: "stereo".into() }
+        Settings { cache_secs: 5, deinterlace: false, volume: 80, audio: "hdmi".into(), aspect: "fit".into(), decoder: "hardware".into(), order: "az".into(), channels: "stereo".into(), fav_color: "cyan".into() }
     }
 }
 
@@ -287,6 +344,7 @@ impl Settings {
                 ("decoder", Json::Str(s)) => self.decoder = s,
                 ("order", Json::Str(s)) => self.order = s,
                 ("channels", Json::Str(s)) => self.channels = s,
+                ("fav_color", Json::Str(s)) => self.fav_color = s,
                 _ => {}
             }
         }
@@ -294,10 +352,10 @@ impl Settings {
 
     pub fn to_json(&self) -> String {
         format!(
-            "{{\n  \"cache_secs\": {},\n  \"deinterlace\": {},\n  \"volume\": {},\n  \"audio\": {},\n  \"aspect\": {},\n  \"decoder\": {},\n  \"order\": {},\n  \"channels\": {}\n}}\n",
+            "{{\n  \"cache_secs\": {},\n  \"deinterlace\": {},\n  \"volume\": {},\n  \"audio\": {},\n  \"aspect\": {},\n  \"decoder\": {},\n  \"order\": {},\n  \"channels\": {},\n  \"fav_color\": {}\n}}\n",
             self.cache_secs, self.deinterlace, self.volume, json_str(&self.audio), json_str(&self.aspect),
             json_str(&self.decoder), json_str(&self.order),
-            json_str(&self.channels)
+            json_str(&self.channels), json_str(&self.fav_color)
         )
     }
 
@@ -450,8 +508,32 @@ mod tests {
     }
 
     #[test]
+    fn favorites_round_trip() {
+        let c = Channel {
+            name: "BBC One, \"HD\"".into(),
+            group: "UK \"Main\"".into(),
+            url: "http://x.example/live/u/p/1.ts".into(),
+            user_agent: "VLC/3.0".into(),
+            referrer: "http://r.example/".into(),
+            headers: vec![("Origin".into(), "http://o.example/a?b=c&d".into())],
+            duration: -1,
+        };
+        let film = Channel { name: "Film".into(), url: "http://x.example/movie/u/p/9.mp4".into(), duration: 5400, ..Default::default() };
+        let back = parse_m3u(&favorites_m3u(&[c.clone(), film.clone()]));
+        assert_eq!(back.len(), 2);
+        assert_eq!(back[0].name, c.name);
+        assert_eq!(back[0].group, "UK 'Main'");
+        assert_eq!(back[0].url, c.url);
+        assert_eq!(back[0].user_agent, c.user_agent);
+        assert_eq!(back[0].referrer, c.referrer);
+        assert_eq!(back[0].headers, c.headers);
+        assert_eq!(back[1].duration, 5400);
+        assert!(back[1].is_vod() && !back[0].is_vod());
+    }
+
+    #[test]
     fn settings_go_format() {
         let s = Settings::default();
-        assert_eq!(s.to_json(), "{\n  \"cache_secs\": 5,\n  \"deinterlace\": false,\n  \"volume\": 80,\n  \"audio\": \"hdmi\",\n  \"aspect\": \"fit\",\n  \"decoder\": \"hardware\",\n  \"order\": \"az\",\n  \"channels\": \"stereo\"\n}\n");
+        assert_eq!(s.to_json(), "{\n  \"cache_secs\": 5,\n  \"deinterlace\": false,\n  \"volume\": 80,\n  \"audio\": \"hdmi\",\n  \"aspect\": \"fit\",\n  \"decoder\": \"hardware\",\n  \"order\": \"az\",\n  \"channels\": \"stereo\",\n  \"fav_color\": \"cyan\"\n}\n");
     }
 }

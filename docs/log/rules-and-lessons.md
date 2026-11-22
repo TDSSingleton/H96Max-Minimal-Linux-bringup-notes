@@ -23,6 +23,8 @@ Part of the session log (the narrative: what happened and why); index in [README
   `ma.m3u`. That covers everything under `/var/lib/h96ui/subs/` (`<name>.m3u`, `<name>.url`,
   `<name>.xtream` with its credentials) and any other provider playlist/account file on the
   device: Claude does not read, edit, rename, move, refresh, delete or copy them off the box.
+  That includes `/var/lib/h96ui/favorites.m3u` (EBI ≥ 0.7): copies of provider stream URLs,
+  Xtream passwords inside.
   Tests use a scratch `H96UI_DATA` dir or `ma.m3u`, never the real subscriptions.
 - **Access (user, 2026-11-22): no root access without the project's ssh key.** sshd is key-only
   (`AuthenticationMethods publickey`), root's password is `*` (never empty, never `!`: OpenSSH
